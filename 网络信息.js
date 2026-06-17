@@ -2,7 +2,7 @@
  * 网络信息
  */
 
-// 填你自己的图标直链
+// 图标
 const PANEL_ICON = "https://github.com/h05n/tubiao/raw/main/Surge/我的节点.png";
 
 // 处理模块传参，规避长字符串里的 "=" 被误截断
