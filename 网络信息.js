@@ -50,7 +50,7 @@ function toSimp(str) {
         '與':'与','興':'兴','舊':'旧','萬':'万','葉':'叶','號':'号',
         '虧':'亏','蟲':'虫','蝦':'虾','螢':'萤','蟬':'蝉','蠻':'蛮',
         '衛':'卫','衝':'冲','複':'复','見':'见','規':'规','視':'视',
-        '親':'亲','覺':'觉','覽':'览','觀':'观','角':'角','計':'计',
+        '親':'亲','覺':'觉','覽':'览','观':'观','角':'角','計':'计',
         '訂':'订','認':'认','譏':'讥','討':'讨','讓':'让','訖':'讫',
         '訓':'训','議':'议','記':'记','講':'讲','諱':'讳','訝':'讶',
         '許':'许','論':'论','訟':'讼','諷':'讽','設':'设','訪':'访',
@@ -66,7 +66,7 @@ function toSimp(str) {
     return res;
 }
 
-// 核心地理位置清理（强制只保留2个级别，无情砍掉后缀）
+// 核心地理位置清理（强制抛弃生僻英文，强力去后缀，永远只保留前2级）
 function cleanLocation(c, r, ct, d) {
     let arr = [c, r, ct, d].filter(Boolean).map(i => {
         let s = String(i).replace(/Province|City|Prefecture|County|District|State/gi, '').trim();
@@ -82,18 +82,19 @@ function cleanLocation(c, r, ct, d) {
             'Kyoto': '京都', 'Aichi': '爱知', 'Nagoya': '名古屋', 'Kwai Tsing District': '葵青', 'Kwai Tsing': '葵青', 
             'Kwai Chung': '葵涌', 'Tsuen Wan': '荃湾', 'Sha Tin': '沙田', 'Tai Po': '大埔', 'Yuen Long': '元朗', 
             'Tuen Mun': '屯门', 'Sham Shui Po': '深水埗', 'Kwun Tong': '观塘', 'Wong Tai Sin': '黄大仙', 
-            'Yau Tsim Mong': '油尖旺', 'Central and Western': '中西区', 'Wan Chai': '湾仔', 'Eastern': '东区', 
+            'Yau Tsim Mong': '油尖旺', 'Central and Western': '中西', 'Wan Chai': '湾仔', 'Eastern': '东区', 
             'Southern': '南区', 'Islands': '离岛', 'Kowloon': '九龙', 'New Territories': '新界'
         };
         s = transMap[s] || s;
         s = toSimp(s);
         
-        // 激进模式：所有后缀一律砍掉，包括州、都、区等
-        s = s.replace(/特别行政区|自治区|维吾尔|壮族|回族|省|市|府|县|区|州|都$/g, '');
+        // 激进模式：所有后缀一律砍掉，确保极简（东京都->东京，葵青区->葵青，华盛顿州->华盛顿）
+        s = s.replace(/(特别行政区|自治区|维吾尔|壮族|回族|省|市|府|县|区|州|都)$/g, '');
         return s.trim();
     });
 
-    // 去重，并且抛弃任何没有被翻译成中文的纯英文（比如 Seya 这种生僻字直接当垃圾扔掉）
+    // 1. 去重
+    // 2. 抛弃任何纯英文片段（比如 Seya 这种生僻字没被字典翻译出来，直接当垃圾过滤掉）
     let resArr = [...new Set(arr)].filter(s => s && !/^[a-zA-Z0-9\s\-\.,]+$/.test(s));
     
     // 如果包含省市且开头是中国，直接隐藏中国以求极简
@@ -101,7 +102,9 @@ function cleanLocation(c, r, ct, d) {
         resArr.shift();
     }
     
-    // 终极绝杀：永远只截取数组里的前两个元素（例如只保留“日本”和“东京”）
+    // 终极绝杀：永远只截取数组里的前两个元素
+    // 例如：["日本", "东京", "新宿"] -> 变成 "日本 东京"
+    // 例如：["香港", "葵青", "葵涌"] -> 变成 "香港 葵青"
     return resArr.slice(0, 2).join(' ') || '未知';
 }
 
@@ -133,7 +136,29 @@ function cleanISP(isp) {
     return res || isp;
 }
 
-// Cloudflare CC转中文映射
+// CF Colo 真实物理机房探测字典
+const coloMap = {
+    'HKG': ['香港', ''],
+    'TPE': ['台湾', '台北'],
+    'NRT': ['日本', '东京'],
+    'HND': ['日本', '东京'],
+    'KIX': ['日本', '大阪'],
+    'SGP': ['新加坡', ''],
+    'ICN': ['韩国', '首尔'],
+    'LAX': ['美国', '洛杉矶'],
+    'SJC': ['美国', '圣何塞'],
+    'SFO': ['美国', '旧金山'],
+    'SEA': ['美国', '西雅图'],
+    'IAD': ['美国', '华盛顿'],
+    'ORD': ['美国', '芝加哥'],
+    'FRA': ['德国', '法兰克福'],
+    'LHR': ['英国', '伦敦'],
+    'AMS': ['荷兰', '阿姆斯特丹'],
+    'CDG': ['法国', '巴黎'],
+    'SYD': ['澳大利亚', '悉尼']
+};
+
+// Cloudflare 国家代码兜底映射
 const cfCountryMap = {
     'CN': '中国', 'HK': '香港', 'TW': '台湾', 'MO': '澳门', 'JP': '日本', 'SG': '新加坡', 'US': '美国', 
     'KR': '韩国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'NL': '荷兰', 'AU': '澳大利亚', 'CA': '加拿大', 
@@ -156,7 +181,7 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
         const pLocalIpip = httpGet(`https://myip.ipip.net/json?_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
         const pLocalApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=local&_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
         
-        // 2. 落地：除了 ip-api 获取 ASN，强制引入 Cloudflare 物理探针来彻底解决 Anycast 乱飘荷兰的问题
+        // 2. 落地：引入 Cloudflare 物理探针，专门击杀伪造注册地骗局的 Anycast/广播 IP
         const pLandingApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=landing&_t=${timestamp}`).then(JSON.parse).catch(()=>null);
         const pLandingCF = httpGet(`https://speed.cloudflare.com/meta?_tag=landing&_t=${timestamp}`).then(JSON.parse).catch(()=>null);
 
@@ -176,7 +201,7 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             if (locArr[4]) localISP = cleanISP(locArr[4]);
         }
 
-        // 4. 解析落地 (Cloudflare 测绘优先，无视注册地骗局)
+        // 4. 解析落地 (Cloudflare 物理机房测绘绝对优先，无视注册地)
         let landingIP = '-', landingLoc = '-', landingISP = '-', landingASN = '-';
         if (landingApi) {
             landingIP = landingApi.query;
@@ -184,13 +209,22 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             landingLoc = cleanLocation(landingApi.country, landingApi.regionName, landingApi.city, landingApi.district);
             landingISP = cleanISP(landingApi.isp || landingApi.org);
         }
-        // 如果 CF 物理探针成功响应，直接用它覆盖位置信息
-        if (landingCF && landingCF.country) {
+        
+        // CF 物理探针纠偏逻辑
+        if (landingCF && landingCF.colo) {
             landingIP = landingCF.clientIp || landingIP;
             landingISP = cleanISP(landingCF.asOrganization || landingISP);
             landingASN = landingCF.clientAsn ? `AS${landingCF.clientAsn}` : landingASN;
-            let cfCountry = cfCountryMap[landingCF.country] || landingCF.country;
-            landingLoc = cleanLocation(cfCountry, '', landingCF.city, '');
+            
+            let realLocArr = coloMap[landingCF.colo];
+            if (realLocArr) {
+                // 如果命中物理机房字典，强制使用物理位置（比如把假荷兰修正回真香港）
+                landingLoc = cleanLocation(realLocArr[0], realLocArr[1], '', '');
+            } else {
+                // 兜底使用 CF 的 GeoIP
+                let cfCountry = cfCountryMap[landingCF.country] || landingCF.country;
+                landingLoc = cleanLocation(cfCountry, landingCF.region, landingCF.city, '');
+            }
         }
 
         // 5. 提取入口底层握手 IP
