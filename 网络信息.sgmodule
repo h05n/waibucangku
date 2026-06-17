@@ -1,0 +1,9 @@
+#!name=网络信息
+#!desc=极简专线/中转网络测试面板。分别获取真实本地出口、节点入口以及节点落地 IP 的详细信息。
+# 注：发布到 GitHub 后，请将下面的 script-path 替换为你自己的 GitHub Raw 真实路径。
+
+[Panel]
+网络信息 = script-name=网络信息, update-interval=-1
+
+[Script]
+网络信息 = type=generic, timeout=5, script-path=https://raw.githubusercontent.com/<YOUR_USERNAME>/<YOUR_REPO>/main/网络信息.js
