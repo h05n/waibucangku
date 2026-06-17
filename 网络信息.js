@@ -57,7 +57,7 @@ function toSimp(str) {
         '訣':'诀','證':'证','詁':'诂','訶':'诃','評':'评','詛':'诅',
         '識':'识','詐':'诈','訴':'诉','診':'诊','詆':'诋','謅':'诌',
         '詞':'词','譯':'译','驗':'验','蘇':'苏','州':'州','濱':'滨',
-        '橫':'横','瀨':'濑','谷':'谷'
+        '橫':'横','瀨':'濑','谷':'谷','圖':'图','頓':'顿'
     };
     let res = "";
     for (let i = 0; i < str.length; i++) {
@@ -66,48 +66,51 @@ function toSimp(str) {
     return res;
 }
 
-// 核心地理位置清理（完美去重，剔除冗余英文，保留"区"）
+// 核心地理位置清理（强制只保留2个级别，无情砍掉后缀）
 function cleanLocation(c, r, ct, d) {
     let arr = [c, r, ct, d].filter(Boolean).map(i => {
-        let s = String(i).replace(/Province|City|Prefecture|County/gi, '').trim();
+        let s = String(i).replace(/Province|City|Prefecture|County|District|State/gi, '').trim();
         // 补充常见区划字典
         const transMap = {
             'Tokyo': '东京', 'Tokyo-to': '东京', 'Shinjuku': '新宿', 'Osaka': '大阪', 'Osaka-fu': '大阪',
             'Hong Kong': '香港', 'Taipei': '台北', 'Taiwan': '台湾', 'New Taipei': '新北', 'Singapore': '新加坡',
             'California': '加州', 'Frankfurt': '法兰克福', 'London': '伦敦', 'Sydney': '悉尼', 'New York': '纽约',
-            'Los Angeles': '洛杉矶', 'San Jose': '圣何塞', 'Seattle': '西雅图', 'Japan': '日本', 'United States': '美国',
-            'Korea': '韩国', 'South Korea': '韩国', 'United Kingdom': '英国', 'Germany': '德国', 'France': '法国',
-            'Kanagawa': '神奈川', 'Yokohama': '横滨', 'Seya': '濑谷', 'Saitama': '埼玉', 'Chiba': '千叶', 'Fukuoka': '福冈',
-            'Hokkaido': '北海道', 'Hyogo': '兵库', 'Kyoto': '京都', 'Aichi': '爱知', 'Nagoya': '名古屋',
-            'Kwai Tsing District': '葵青', 'Kwai Tsing': '葵青', 'Kwai Chung': '葵涌', 'Tsuen Wan': '荃湾', 
-            'Sha Tin': '沙田', 'Tai Po': '大埔', 'Yuen Long': '元朗', 'Tuen Mun': '屯门', 'Sham Shui Po': '深水埗',
-            'Kwun Tong': '观塘', 'Wong Tai Sin': '黄大仙', 'Yau Tsim Mong': '油尖旺', 'Central and Western': '中西区',
-            'Wan Chai': '湾仔', 'Eastern': '东区', 'Southern': '南区', 'Islands': '离岛', 'Kowloon': '九龙', 'New Territories': '新界'
+            'Los Angeles': '洛杉矶', 'San Jose': '圣何塞', 'Seattle': '西雅图', 'Washington': '华盛顿',
+            'Japan': '日本', 'United States': '美国', 'Korea': '韩国', 'South Korea': '韩国', 'United Kingdom': '英国',
+            'Germany': '德国', 'France': '法国', 'Kanagawa': '神奈川', 'Yokohama': '横滨', 'Seya': '濑谷', 
+            'Saitama': '埼玉', 'Chiba': '千叶', 'Fukuoka': '福冈', 'Hokkaido': '北海道', 'Hyogo': '兵库', 
+            'Kyoto': '京都', 'Aichi': '爱知', 'Nagoya': '名古屋', 'Kwai Tsing District': '葵青', 'Kwai Tsing': '葵青', 
+            'Kwai Chung': '葵涌', 'Tsuen Wan': '荃湾', 'Sha Tin': '沙田', 'Tai Po': '大埔', 'Yuen Long': '元朗', 
+            'Tuen Mun': '屯门', 'Sham Shui Po': '深水埗', 'Kwun Tong': '观塘', 'Wong Tai Sin': '黄大仙', 
+            'Yau Tsim Mong': '油尖旺', 'Central and Western': '中西区', 'Wan Chai': '湾仔', 'Eastern': '东区', 
+            'Southern': '南区', 'Islands': '离岛', 'Kowloon': '九龙', 'New Territories': '新界'
         };
         s = transMap[s] || s;
         s = toSimp(s);
-        // 注意：这里去掉了 /区/ 的正则，这样香港的“中西区”就能完美保留
-        s = s.replace(/特别行政区|自治区|维吾尔|壮族|回族|省|市|府|县$/g, '');
+        
+        // 激进模式：所有后缀一律砍掉，包括州、都、区等
+        s = s.replace(/特别行政区|自治区|维吾尔|壮族|回族|省|市|府|县|区|州|都$/g, '');
         return s.trim();
     });
 
-    // 核心去重：过滤掉 ["上海", "上海"] 的重复情况
-    // 并且：如果这段字里面全是英文字母（比如 Seya 没被翻译出来），直接砍掉不要，保持 UI 极简纯净
+    // 去重，并且抛弃任何没有被翻译成中文的纯英文（比如 Seya 这种生僻字直接当垃圾扔掉）
     let resArr = [...new Set(arr)].filter(s => s && !/^[a-zA-Z0-9\s\-\.,]+$/.test(s));
     
     // 如果包含省市且开头是中国，直接隐藏中国以求极简
     if (resArr[0] === '中国' && resArr.length > 1) {
         resArr.shift();
     }
-    return resArr.join(' ') || '未知';
+    
+    // 终极绝杀：永远只截取数组里的前两个元素（例如只保留“日本”和“东京”）
+    return resArr.slice(0, 2).join(' ') || '未知';
 }
 
-// 激进清理冗余的 ISP（网络商）名字
+// 激进清理冗余的 ISP
 function cleanISP(isp) {
     if (!isp) return '未知';
     let i = isp.toLowerCase();
     
-    // 1. 最高优先级硬编码拦截（完美解决又臭又长的名字）
+    // 1. 最高优先级硬编码拦截
     if (i.includes('zhipinshang')) return '智品尚';
     if (i.includes('unicom')) return '中国联通';
     if (i.includes('telecom') || i.includes('chinanet')) return '中国电信';
@@ -118,19 +121,24 @@ function cleanISP(isp) {
     if (i.includes('huawei')) return '华为云';
     if (i.includes('misaka')) return 'Misaka';
     
-    // 2. 如果没被上面拦截，则进行激进的废话剥离
+    // 2. 激进剥离废话
     let res = isp
-        // 移除国家代号括号
         .replace(/\s*[（\(]?(hong\s*kong|hk|taiwan|tw|macau|macao|korea|kr|japan|jp|singapore|sg|america|us)[）\)]?\s*/gi, ' ')
-        // 剔除所有冗长的科技、网络商业英文后缀
-        .replace(/\b(electronic|electron|communication|communications|information|technology|tech|data|network|networks|cloud|solutions|services|group|telecom|host|hosting|datacenter|server|co|ltd|inc|llc|limited|corporation)\b/gi, '')
+        .replace(/\b(electronic|electron|communication|communications|information|technology|tech|data|network|networks|cloud|solutions|services|group|telecom|host|hosting|datacenter|server|co|ltd|inc|llc|limited|corporation|corp)\b/gi, '')
         .replace(/[,.（）\(\)]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 
     res = toSimp(res);
-    return res || isp; // 如果全删空了，兜底返回原始字符
+    return res || isp;
 }
+
+// Cloudflare CC转中文映射
+const cfCountryMap = {
+    'CN': '中国', 'HK': '香港', 'TW': '台湾', 'MO': '澳门', 'JP': '日本', 'SG': '新加坡', 'US': '美国', 
+    'KR': '韩国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'NL': '荷兰', 'AU': '澳大利亚', 'CA': '加拿大', 
+    'IN': '印度', 'MY': '马来西亚', 'TH': '泰国', 'VN': '越南', 'PH': '菲律宾', 'ID': '印尼', 'RU': '俄罗斯'
+};
 
 function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
     let str = `${title}：${ipStr || '未获取'}\n`;
@@ -148,10 +156,11 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
         const pLocalIpip = httpGet(`https://myip.ipip.net/json?_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
         const pLocalApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=local&_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
         
-        // 2. 落地 (彻底换回原版的 ip-api，完美解决变荷兰的问题，防乱飘)
+        // 2. 落地：除了 ip-api 获取 ASN，强制引入 Cloudflare 物理探针来彻底解决 Anycast 乱飘荷兰的问题
         const pLandingApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=landing&_t=${timestamp}`).then(JSON.parse).catch(()=>null);
+        const pLandingCF = httpGet(`https://speed.cloudflare.com/meta?_tag=landing&_t=${timestamp}`).then(JSON.parse).catch(()=>null);
 
-        const [localIpip, localApi, landingApi] = await Promise.all([pLocalIpip, pLocalApi, pLandingApi]);
+        const [localIpip, localApi, landingApi, landingCF] = await Promise.all([pLocalIpip, pLocalApi, pLandingApi, pLandingCF]);
 
         // 3. 解析本地
         let localIP = '-', localLoc = '-', localISP = '-', localASN = '-';
@@ -167,13 +176,21 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             if (locArr[4]) localISP = cleanISP(locArr[4]);
         }
 
-        // 4. 解析落地
+        // 4. 解析落地 (Cloudflare 测绘优先，无视注册地骗局)
         let landingIP = '-', landingLoc = '-', landingISP = '-', landingASN = '-';
         if (landingApi) {
             landingIP = landingApi.query;
             landingASN = landingApi.as ? landingApi.as.split(' ')[0] : '-';
             landingLoc = cleanLocation(landingApi.country, landingApi.regionName, landingApi.city, landingApi.district);
             landingISP = cleanISP(landingApi.isp || landingApi.org);
+        }
+        // 如果 CF 物理探针成功响应，直接用它覆盖位置信息
+        if (landingCF && landingCF.country) {
+            landingIP = landingCF.clientIp || landingIP;
+            landingISP = cleanISP(landingCF.asOrganization || landingISP);
+            landingASN = landingCF.clientAsn ? `AS${landingCF.clientAsn}` : landingASN;
+            let cfCountry = cfCountryMap[landingCF.country] || landingCF.country;
+            landingLoc = cleanLocation(cfCountry, '', landingCF.city, '');
         }
 
         // 5. 提取入口底层握手 IP
@@ -196,7 +213,7 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             }
         }
 
-        // 6. 测算入口详细信息 (强制直连，极速测绘)
+        // 6. 测算入口详细信息 (强制直连)
         let entLoc = '-', entISP = '-', entASN = '-';
         if (entranceIP !== '-' && entranceIP !== localIP) {
             if (entranceIP === landingIP) {
