@@ -1,14 +1,12 @@
 #!name=网络信息
 #!desc=面板
-#!arguments=PRIVACY:[开启, 关闭], HIDE_LOCAL:[开启, 关闭], TIMEOUT:5, EVENT_DELAY:1
-#!arguments-desc=PRIVACY: 开启后隐藏所有IP | HIDE_LOCAL: 开启后关闭本地信息 | TIMEOUT: 核心API请求的强制熔断超时时间(秒) | EVENT_DELAY: 网络切换后让子弹飞一会儿的静默刷新延迟(秒)
+#!arguments=PRIVACY:1, HIDE_LOCAL:1, TIMEOUT:5, EVENT_DELAY:1
+#!arguments-desc=PRIVACY: 1=开启IP打码, 0=关闭 | HIDE_LOCAL: 1=关闭本地信息块, 0=开启 | TIMEOUT: 强制熔断超时时间(秒) | EVENT_DELAY: 网络切换静默刷新延迟(秒)
 
 [Panel]
-网络信息面板 = script-name=网络信息探针, update-interval=-1
+网络信息 = script-name=网络信息探针
 
 [Script]
-# 面板脚本：绑定 GitHub 链接
 网络信息探针 = type=generic, timeout=10, persistent=1, script-path=https://github.com/h05n/waibucangku/raw/main/网络信息.js, argument="PRIVACY={{{PRIVACY}}}&HIDE_LOCAL={{{HIDE_LOCAL}}}&TIMEOUT={{{TIMEOUT}}}"
 
-# 网络事件监听：当网络状态或节点切换时，延迟指定的秒数后触发静默刷新
 网络切换刷新 = type=event, event-name=network-changed, script-name=网络信息探针, event-delay={{{EVENT_DELAY}}}
