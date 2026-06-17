@@ -8,5 +8,4 @@
 
 [Script]
 网络信息探针 = type=generic, timeout=10, persistent=1, script-path=https://github.com/h05n/waibucangku/raw/main/网络信息.js, argument="PRIVACY={{{PRIVACY}}}&HIDE_LOCAL={{{HIDE_LOCAL}}}&TIMEOUT={{{TIMEOUT}}}"
-
 网络切换刷新 = type=event, event-name=network-changed, script-name=网络信息探针, event-delay={{{EVENT_DELAY}}}
