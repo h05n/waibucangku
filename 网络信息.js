@@ -97,42 +97,45 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
 
 (async () => {
     try {
-        // 1. 本地直连请求（结合 ip-api 取 ASN，结合 ipip.net 取国内精准盐城/苏州数据）
-        let localIP = '-', localLoc = '-', localISP = '-', localASN = '-';
+        // 1. 并发请求：引入 ipip.net 双重测绘来彻底解决本地和落地 IP “乱飘”问题
         const pLocalApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}`, 'DIRECT').then(JSON.parse).catch(()=>null);
         const pLocalIpip = httpGet('https://myip.ipip.net/json', 'DIRECT').then(JSON.parse).catch(()=>null);
-
-        // 2. 落地代理请求
-        let landingIP = '-', landingLoc = '-', landingISP = '-', landingASN = '-';
+        
         const pLandingApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}`).then(JSON.parse).catch(()=>null);
+        const pLandingIpip = httpGet('https://myip.ipip.net/json').then(JSON.parse).catch(()=>null);
 
-        // 并发执行缩短时间
-        const [localApi, localIpip, landingApi] = await Promise.all([pLocalApi, pLocalIpip, pLandingApi]);
+        const [localApi, localIpip, landingApi, landingIpip] = await Promise.all([pLocalApi, pLocalIpip, pLandingApi, pLandingIpip]);
 
-        // 解析本地基础数据
+        // 2. 解析本地数据
+        let localIP = '-', localLoc = '-', localISP = '-', localASN = '-';
         if (localApi) {
             localIP = localApi.query;
             localASN = localApi.as ? localApi.as.split(' ')[0] : '-';
             localLoc = cleanLocation(localApi.country, localApi.regionName, localApi.city);
             localISP = cleanISP(localApi.isp);
         }
-        
-        // 覆盖国内高精度数据（完美解决常州、苏州、盐城等误差）
         if (localIpip && localIpip.data && localIpip.data.location) {
             const locArr = localIpip.data.location; // ["中国", "江苏", "盐城", "", "联通"]
-            if (locArr[1] || locArr[2]) localLoc = [locArr[1], locArr[2]].filter(Boolean).join(' ');
+            localLoc = cleanLocation(locArr[0], locArr[1], locArr[2]);
             if (locArr[4]) localISP = cleanISP(locArr[4]);
         }
 
-        // 解析落地基础数据
+        // 3. 解析落地数据
+        let landingIP = '-', landingLoc = '-', landingISP = '-', landingASN = '-';
         if (landingApi) {
             landingIP = landingApi.query;
             landingASN = landingApi.as ? landingApi.as.split(' ')[0] : '-';
             landingLoc = cleanLocation(landingApi.country, landingApi.regionName, landingApi.city);
             landingISP = cleanISP(landingApi.isp);
         }
+        if (landingIpip && landingIpip.data && landingIpip.data.location) {
+            const locArr = landingIpip.data.location;
+            const ipipLoc = cleanLocation(locArr[0], locArr[1], locArr[2]);
+            if (ipipLoc !== '未知') landingLoc = ipipLoc;
+            if (locArr[4]) landingISP = cleanISP(locArr[4]);
+        }
 
-        // 3. 抓取 Surge 内部请求，定位底层入口 IP
+        // 4. 抓取 Surge 内部请求，定位底层入口 IP
         let entranceIP = '-';
         const recentReqsStr = await new Promise(r => $httpAPI('GET', '/v1/requests/recent', null, r));
         if (recentReqsStr && recentReqsStr.requests) {
@@ -143,16 +146,14 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             }
         }
 
-        // 4. 获取入口 IP 的详细信息
+        // 5. 获取入口 IP 的详细信息
         let entLoc = '-', entISP = '-', entASN = '-';
         if (entranceIP !== '-') {
             if (entranceIP === landingIP) {
-                // 入口等同落地 (直连节点)
                 entLoc = landingLoc; entISP = landingISP; entASN = landingASN;
             } else if (entranceIP === localIP) {
                 entLoc = localLoc; entISP = localISP; entASN = localASN;
             } else {
-                // 纯中转节点入口
                 const entApi = await httpGet(`http://ip-api.com/json/${entranceIP}?lang=${API_LANG}`).then(JSON.parse).catch(()=>null);
                 if (entApi) {
                     entASN = entApi.as ? entApi.as.split(' ')[0] : '-';
@@ -162,7 +163,7 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             }
         }
 
-        // 5. 拼装最终面板输出内容
+        // 6. 拼装最终面板输出内容
         const blocks = [];
         blocks.push(formatNode('本地', localIP, localLoc, localISP, localASN));
         blocks.push(formatNode('入口', entranceIP, entLoc, entISP, entASN));
