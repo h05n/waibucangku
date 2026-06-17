@@ -4,4 +4,4 @@
 网络信息 = script-name=网络信息, update-interval=1
 
 [Script]
-网络信息 = type=generic, timeout=5, script-path=https://raw.githubusercontent.com/<你的用户名>/<你的仓库>/main/网络信息.js
+网络信息 = type=generic, timeout=5, script-path=https://raw.githubusercontent.com/h05n/waibucangku/refs/heads/main/网络信息.js
