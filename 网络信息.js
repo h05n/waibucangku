@@ -50,7 +50,7 @@ function toSimp(str) {
         '與':'与','興':'兴','舊':'旧','萬':'万','葉':'叶','號':'号',
         '虧':'亏','蟲':'虫','蝦':'虾','螢':'萤','蟬':'蝉','蠻':'蛮',
         '衛':'卫','衝':'冲','複':'复','見':'见','規':'规','視':'视',
-        '親':'亲','覺':'觉','覽':'览','观':'观','角':'角','計':'计',
+        '親':'亲','覺':'觉','覽':'览','觀':'观','角':'角','計':'计',
         '訂':'订','認':'认','譏':'讥','討':'讨','讓':'让','訖':'讫',
         '訓':'训','議':'议','記':'记','講':'讲','諱':'讳','訝':'讶',
         '許':'许','論':'论','訟':'讼','諷':'讽','設':'设','訪':'访',
@@ -70,7 +70,6 @@ function toSimp(str) {
 function cleanLocation(c, r, ct, d) {
     let arr = [c, r, ct, d].filter(Boolean).map(i => {
         let s = String(i).replace(/Province|City|Prefecture|County|District|State/gi, '').trim();
-        // 补充常见区划字典
         const transMap = {
             'Tokyo': '东京', 'Tokyo-to': '东京', 'Shinjuku': '新宿', 'Osaka': '大阪', 'Osaka-fu': '大阪',
             'Hong Kong': '香港', 'Taipei': '台北', 'Taiwan': '台湾', 'New Taipei': '新北', 'Singapore': '新加坡',
@@ -88,13 +87,12 @@ function cleanLocation(c, r, ct, d) {
         s = transMap[s] || s;
         s = toSimp(s);
         
-        // 激进模式：所有后缀一律砍掉，确保极简（东京都->东京，葵青区->葵青，华盛顿州->华盛顿）
+        // 激进模式：所有后缀一律砍掉
         s = s.replace(/(特别行政区|自治区|维吾尔|壮族|回族|省|市|府|县|区|州|都)$/g, '');
         return s.trim();
     });
 
-    // 1. 去重
-    // 2. 抛弃任何纯英文片段（比如 Seya 这种生僻字没被字典翻译出来，直接当垃圾过滤掉）
+    // 去重，并抛弃翻译后依然纯英文的垃圾碎片（比如 Seya 这种生僻字）
     let resArr = [...new Set(arr)].filter(s => s && !/^[a-zA-Z0-9\s\-\.,]+$/.test(s));
     
     // 如果包含省市且开头是中国，直接隐藏中国以求极简
@@ -102,9 +100,7 @@ function cleanLocation(c, r, ct, d) {
         resArr.shift();
     }
     
-    // 终极绝杀：永远只截取数组里的前两个元素
-    // 例如：["日本", "东京", "新宿"] -> 变成 "日本 东京"
-    // 例如：["香港", "葵青", "葵涌"] -> 变成 "香港 葵青"
+    // 终极绝杀：永远只截取数组里的前两个元素（如只显示 日本 东京）
     return resArr.slice(0, 2).join(' ') || '未知';
 }
 
@@ -113,7 +109,7 @@ function cleanISP(isp) {
     if (!isp) return '未知';
     let i = isp.toLowerCase();
     
-    // 1. 最高优先级硬编码拦截
+    // 拦截臭长名字和常用简写
     if (i.includes('zhipinshang')) return '智品尚';
     if (i.includes('unicom')) return '中国联通';
     if (i.includes('telecom') || i.includes('chinanet')) return '中国电信';
@@ -124,7 +120,7 @@ function cleanISP(isp) {
     if (i.includes('huawei')) return '华为云';
     if (i.includes('misaka')) return 'Misaka';
     
-    // 2. 激进剥离废话
+    // 激进剥离长篇大论的公司和科技英语单词
     let res = isp
         .replace(/\s*[（\(]?(hong\s*kong|hk|taiwan|tw|macau|macao|korea|kr|japan|jp|singapore|sg|america|us)[）\)]?\s*/gi, ' ')
         .replace(/\b(electronic|electron|communication|communications|information|technology|tech|data|network|networks|cloud|solutions|services|group|telecom|host|hosting|datacenter|server|co|ltd|inc|llc|limited|corporation|corp)\b/gi, '')
@@ -136,34 +132,24 @@ function cleanISP(isp) {
     return res || isp;
 }
 
-// CF Colo 真实物理机房探测字典
-const coloMap = {
-    'HKG': ['香港', ''],
-    'TPE': ['台湾', '台北'],
-    'NRT': ['日本', '东京'],
-    'HND': ['日本', '东京'],
-    'KIX': ['日本', '大阪'],
-    'SGP': ['新加坡', ''],
-    'ICN': ['韩国', '首尔'],
-    'LAX': ['美国', '洛杉矶'],
-    'SJC': ['美国', '圣何塞'],
-    'SFO': ['美国', '旧金山'],
-    'SEA': ['美国', '西雅图'],
-    'IAD': ['美国', '华盛顿'],
-    'ORD': ['美国', '芝加哥'],
-    'FRA': ['德国', '法兰克福'],
-    'LHR': ['英国', '伦敦'],
-    'AMS': ['荷兰', '阿姆斯特丹'],
-    'CDG': ['法国', '巴黎'],
-    'SYD': ['澳大利亚', '悉尼']
-};
-
-// Cloudflare 国家代码兜底映射
-const cfCountryMap = {
-    'CN': '中国', 'HK': '香港', 'TW': '台湾', 'MO': '澳门', 'JP': '日本', 'SG': '新加坡', 'US': '美国', 
-    'KR': '韩国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'NL': '荷兰', 'AU': '澳大利亚', 'CA': '加拿大', 
-    'IN': '印度', 'MY': '马来西亚', 'TH': '泰国', 'VN': '越南', 'PH': '菲律宾', 'ID': '印尼', 'RU': '俄罗斯'
-};
+// 利用 Surge 原生本地 GeoIP 引擎纠偏 (100%与系统UI测试保持一致，专治各种广播IP和荷兰骗局)
+function getSurgeGeoLoc(ip, apiCc) {
+    // 只要 Surge 内部支持离线 GeoIP 查询，就在后台瞬间查一下
+    if (typeof $utils !== 'undefined' && $utils.geoip && ip) {
+        let surgeCc = $utils.geoip(ip);
+        if (surgeCc && apiCc && surgeCc !== apiCc) {
+            // Surge本地库和API查出的代码不一致，说明遇到Anycast广播IP
+            // 此时无条件信任 Surge 本地库，无情抛弃假 API 的地理位置
+            const ccMap = {
+                'CN': '中国', 'HK': '香港', 'TW': '台湾', 'MO': '澳门', 'JP': '日本', 'SG': '新加坡', 'US': '美国', 
+                'KR': '韩国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'NL': '荷兰', 'AU': '澳大利亚', 'CA': '加拿大', 
+                'IN': '印度', 'MY': '马来西亚', 'TH': '泰国', 'VN': '越南', 'PH': '菲律宾', 'ID': '印尼', 'RU': '俄罗斯'
+            };
+            return cleanLocation(ccMap[surgeCc] || surgeCc, '', '', '');
+        }
+    }
+    return null; // 若一致或查询不到则不纠偏
+}
 
 function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
     let str = `${title}：${ipStr || '未获取'}\n`;
@@ -177,17 +163,14 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
     try {
         const timestamp = Date.now();
         
-        // 1. 本地 (直连请求)
+        // 并发执行：本地 + 落地（剔除了所有 CF 探针，网络请求缩减到最少）
         const pLocalIpip = httpGet(`https://myip.ipip.net/json?_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
         const pLocalApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=local&_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
-        
-        // 2. 落地：引入 Cloudflare 物理探针，专门击杀伪造注册地骗局的 Anycast/广播 IP
         const pLandingApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=landing&_t=${timestamp}`).then(JSON.parse).catch(()=>null);
-        const pLandingCF = httpGet(`https://speed.cloudflare.com/meta?_tag=landing&_t=${timestamp}`).then(JSON.parse).catch(()=>null);
 
-        const [localIpip, localApi, landingApi, landingCF] = await Promise.all([pLocalIpip, pLocalApi, pLandingApi, pLandingCF]);
+        const [localIpip, localApi, landingApi] = await Promise.all([pLocalIpip, pLocalApi, pLandingApi]);
 
-        // 3. 解析本地
+        // 解析本地
         let localIP = '-', localLoc = '-', localISP = '-', localASN = '-';
         if (localApi) {
             localIP = localApi.query;
@@ -201,33 +184,19 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             if (locArr[4]) localISP = cleanISP(locArr[4]);
         }
 
-        // 4. 解析落地 (Cloudflare 物理机房测绘绝对优先，无视注册地)
+        // 解析落地
         let landingIP = '-', landingLoc = '-', landingISP = '-', landingASN = '-';
         if (landingApi) {
             landingIP = landingApi.query;
             landingASN = landingApi.as ? landingApi.as.split(' ')[0] : '-';
-            landingLoc = cleanLocation(landingApi.country, landingApi.regionName, landingApi.city, landingApi.district);
             landingISP = cleanISP(landingApi.isp || landingApi.org);
-        }
-        
-        // CF 物理探针纠偏逻辑
-        if (landingCF && landingCF.colo) {
-            landingIP = landingCF.clientIp || landingIP;
-            landingISP = cleanISP(landingCF.asOrganization || landingISP);
-            landingASN = landingCF.clientAsn ? `AS${landingCF.clientAsn}` : landingASN;
             
-            let realLocArr = coloMap[landingCF.colo];
-            if (realLocArr) {
-                // 如果命中物理机房字典，强制使用物理位置（比如把假荷兰修正回真香港）
-                landingLoc = cleanLocation(realLocArr[0], realLocArr[1], '', '');
-            } else {
-                // 兜底使用 CF 的 GeoIP
-                let cfCountry = cfCountryMap[landingCF.country] || landingCF.country;
-                landingLoc = cleanLocation(cfCountry, landingCF.region, landingCF.city, '');
-            }
+            // Surge 原生 GeoIP 纠偏瞬间介入（修复荷兰等假IP乱飘现象）
+            let fixedLoc = getSurgeGeoLoc(landingIP, landingApi.countryCode);
+            landingLoc = fixedLoc || cleanLocation(landingApi.country, landingApi.regionName, landingApi.city, landingApi.district);
         }
 
-        // 5. 提取入口底层握手 IP
+        // 提取入口底层握手 IP
         let entranceIP = '-';
         const recentReqsStr = await new Promise(r => $httpAPI('GET', '/v1/requests/recent', null, r));
         if (recentReqsStr && recentReqsStr.requests) {
@@ -247,7 +216,7 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             }
         }
 
-        // 6. 测算入口详细信息 (强制直连)
+        // 测算入口详细信息
         let entLoc = '-', entISP = '-', entASN = '-';
         if (entranceIP !== '-' && entranceIP !== localIP) {
             if (entranceIP === landingIP) {
@@ -256,9 +225,11 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
                 const entApi = await httpGet(`http://ip-api.com/json/${entranceIP}?lang=${API_LANG}&_t=${timestamp}`, 'DIRECT').then(JSON.parse).catch(()=>null);
                 if (entApi) {
                     entASN = entApi.as ? entApi.as.split(' ')[0] : '-';
-                    entLoc = cleanLocation(entApi.country, entApi.regionName, entApi.city, entApi.district);
                     entISP = cleanISP(entApi.isp || entApi.org);
                     if (entApi.query && entApi.query !== entranceIP) entranceIP = entApi.query;
+                    
+                    let fixedEntLoc = getSurgeGeoLoc(entranceIP, entApi.countryCode);
+                    entLoc = fixedEntLoc || cleanLocation(entApi.country, entApi.regionName, entApi.city, entApi.district);
                 }
             }
         } else if (entranceIP === localIP) {
