@@ -1,7 +1,0 @@
-#!name=网络信息
-#!desc=面板
-[Panel]
-网络信息 = script-name=网络信息, update-interval=-1
-
-[Script]
-网络信息 = type=generic, timeout=5, script-path=网络信息.js
