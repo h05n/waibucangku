@@ -23,7 +23,7 @@ async function httpGet(url, policy = null) {
     }
 }
 
-// 强制中文化与清理 ISP 命名
+// 核心：强制中文化与清理 ISP 命名
 function cleanISP(isp) {
     if (!isp) return '未知';
     const i = isp.toLowerCase();
@@ -62,7 +62,7 @@ function cleanISP(isp) {
     return isp.replace(/,?\s*(inc|ltd|llc|limited|corporation|co\.?)\.?$/i, '').trim();
 }
 
-// 地理位置精简与翻译
+// 核心：地理位置精简与翻译
 function cleanLocation(country, region, city) {
     let c = (country === '中国' || country === 'China') ? '' : (country || '');
     let r = (region || '').replace(/Province/i, '').replace(/City/i, '').replace(/省$/, '').replace(/市$/, '').trim();
@@ -98,12 +98,14 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
 
 (async () => {
     try {
-        // 1. 本地用 ipip.net（强制 DIRECT，最准），落地用 ip.sb（跟随节点，防 Anycast 漂移）
+        // 1. 并发请求：引入 URL Tag 防止 Surge 内部请求抓取错乱
         const pLocalIpip = httpGet('https://myip.ipip.net/json', 'DIRECT').then(JSON.parse).catch(()=>null);
-        const pLocalApi = httpGet('http://ip-api.com/json/?lang=zh-CN', 'DIRECT').then(JSON.parse).catch(()=>null);
-        const pLandingSb = httpGet('https://api-ipv4.ip.sb/geoip').then(JSON.parse).catch(()=>null);
+        // 本地获取 ASN 等数据，强制定向 DIRECT
+        const pLocalApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=local`, 'DIRECT').then(JSON.parse).catch(()=>null);
+        // 落地获取数据，跟随节点
+        const pLandingApi = httpGet(`http://ip-api.com/json/?lang=${API_LANG}&_tag=landing`).then(JSON.parse).catch(()=>null);
 
-        const [localIpip, localApi, landingSb] = await Promise.all([pLocalIpip, pLocalApi, pLandingSb]);
+        const [localIpip, localApi, landingApi] = await Promise.all([pLocalIpip, pLocalApi, pLandingApi]);
 
         // 2. 解析本地数据
         let localIP = '-', localLoc = '-', localISP = '-', localASN = '-';
@@ -111,63 +113,64 @@ function formatNode(title, ipStr, locationStr, ispStr, asnStr) {
             localIP = localApi.query;
             localASN = localApi.as ? localApi.as.split(' ')[0] : '-';
         }
+        // ipip.net 覆盖国内物理位置，实现高精度
         if (localIpip && localIpip.data) {
-            localIP = localIpip.data.ip || localIP; // 以 ipip 为准
+            localIP = localIpip.data.ip || localIP;
             const locArr = localIpip.data.location || [];
             localLoc = cleanLocation(locArr[0], locArr[1], locArr[2]);
             if (locArr[4]) localISP = cleanISP(locArr[4]);
         }
 
-        // 3. 解析落地数据 (ip.sb)
+        // 3. 解析落地数据
         let landingIP = '-', landingLoc = '-', landingISP = '-', landingASN = '-';
-        if (landingSb) {
-            landingIP = landingSb.ip;
-            landingASN = landingSb.asn ? `AS${landingSb.asn}` : '-';
-            landingLoc = cleanLocation(landingSb.country, landingSb.region, landingSb.city);
-            landingISP = cleanISP(landingSb.isp || landingSb.organization);
+        if (landingApi) {
+            landingIP = landingApi.query;
+            landingASN = landingApi.as ? landingApi.as.split(' ')[0] : '-';
+            landingLoc = cleanLocation(landingApi.country, landingApi.regionName, landingApi.city);
+            landingISP = cleanISP(landingApi.isp || landingApi.org);
         }
 
-        // 4. 严格提取入口 IP
+        // 4. 抓取 Surge 内部请求，精准定位底层入口 IP
         let entranceIP = '-';
         const recentReqsStr = await new Promise(r => $httpAPI('GET', '/v1/requests/recent', null, r));
         if (recentReqsStr && recentReqsStr.requests) {
-            // 找到刚才请求 ip.sb 的那条记录
-            const req = recentReqsStr.requests.reverse().find(r => r.URL.includes('api-ipv4.ip.sb'));
+            // 通过 _tag=landing 准确捞出那条走代理的请求
+            const req = recentReqsStr.requests.reverse().find(r => r.URL.includes('_tag=landing'));
             if (req && req.remoteAddress) {
-                // 只有明确包含 (Proxy) 才代表走了代理，否则就是直连
+                // 确保它真的走了代理
                 if (req.remoteAddress.includes('(Proxy)')) {
-                    let rawProxyStr = req.remoteAddress.split(' (Proxy)')[0]; // 例如 "101.133.149.53:443" 或 "hk.airport.com:8443"
+                    let rawProxyStr = req.remoteAddress.split(' (Proxy)')[0]; // 提取 "IP/域名:端口"
                     let lastColon = rawProxyStr.lastIndexOf(':');
                     if (lastColon > -1 && !rawProxyStr.endsWith(']')) {
-                        entranceIP = rawProxyStr.substring(0, lastColon); // 剔除端口号
+                        entranceIP = rawProxyStr.substring(0, lastColon); // 剥离端口号
                     } else {
-                        entranceIP = rawProxyStr.replace(/[\[\]]/g, ''); // 兼容纯净 IP 或 IPv6
+                        entranceIP = rawProxyStr.replace(/[\[\]]/g, ''); // 兼容纯净情况
                     }
                 } else {
-                    entranceIP = localIP; // 没经过 Proxy，说明入口就是本地
+                    entranceIP = localIP; // 直连节点
                 }
             }
         }
 
-        // 5. 获取入口 IP 详情
+        // 5. 获取入口 IP 的详细信息
         let entLoc = '-', entISP = '-', entASN = '-';
         if (entranceIP !== '-' && entranceIP !== localIP) {
             if (entranceIP === landingIP) {
                 entLoc = landingLoc; entISP = landingISP; entASN = landingASN;
             } else {
-                // 因为只查入口 IP 的纯地理信息，强制用 DIRECT 直连查，速度最快
+                // 入口信息只查地理位置，强制走 DIRECT 最快
                 const entApi = await httpGet(`http://ip-api.com/json/${entranceIP}?lang=${API_LANG}`, 'DIRECT').then(JSON.parse).catch(()=>null);
                 if (entApi) {
                     entASN = entApi.as ? entApi.as.split(' ')[0] : '-';
                     entLoc = cleanLocation(entApi.country, entApi.regionName, entApi.city);
-                    entISP = cleanISP(entApi.isp);
+                    entISP = cleanISP(entApi.isp || entApi.org);
                 }
             }
         } else if (entranceIP === localIP) {
             entLoc = localLoc; entISP = localISP; entASN = localASN;
         }
 
-        // 6. 拼装 UI
+        // 6. 拼装最终面板输出内容
         const blocks = [];
         blocks.push(formatNode('本地', localIP, localLoc, localISP, localASN));
         blocks.push(formatNode('入口', entranceIP, entLoc, entISP, entASN));
