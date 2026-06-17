@@ -5,7 +5,7 @@
 // 图标
 const PANEL_ICON = "https://github.com/h05n/tubiao/raw/main/Surge/我的节点.png";
 
-// 处理模块传参，规避长字符串里的 "=" 被误截断
+// 安全解析 Surge 模块传参，规避参数里的 '=' 被误截断
 const arg = (() => {
   if (typeof $argument === 'undefined') return {};
   return $argument.split('&').reduce((acc, item) => {
@@ -17,74 +17,74 @@ const arg = (() => {
   }, {});
 })();
 
-// 超时时间，默认 5 秒
+// 提取功能参数
 const TIMEOUT = parseInt(arg['TIMEOUT']) || 5;
+const PRIVACY = arg['PRIVACY'] === '1';       // 1: 隐藏所有数字 IP，替换为 "已隐藏"
+const HIDE_LOCAL = arg['HIDE_LOCAL'] === '1'; // 1: 物理抹除本地信息块
 
 !(async () => {
-  let title = "网络信息";
   let contentLines = [];
 
-  // 1. 本地局域网信息 (在模块里控制显隐)
-  if (typeof $network !== 'undefined') {
-    if (arg['SSID'] === '1' && $network.wifi?.ssid) {
-      contentLines.push(`SSID: ${$network.wifi.ssid}`);
-    }
-    if (arg['LAN'] === '1' && $network.v4?.primaryAddress) {
-      contentLines.push(`LAN:  ${$network.v4.primaryAddress}`);
-    }
-    if (contentLines.length > 0) contentLines.push("");
-  }
-
-  // 2. 并发查直连和落地
-  // 直连用 IPIP 最准，落地用 IP-API 自带中文
+  // 并发查直连和落地环境 (无状态请求，确保绝对实时)
   const [localInfo, proxyInfo] = await Promise.all([
     fetchLocalIPIP(),
     fetchIpApi()
   ]);
 
-  // 3. 从 Surge 最近请求里扒出真实的中转入口 IP
+  // 从 Surge 最近的请求池里，嗅探底层代理的真实入口 IP
   let entranceInfo = null;
   const entranceIp = await getEntranceIp();
+  // 如果嗅探到了入口，且入口不等于落地也不等于本地，才去查它的归属地
   if (entranceIp && (!proxyInfo || entranceIp !== proxyInfo.ip) && (!localInfo || entranceIp !== localInfo.ip)) {
     entranceInfo = await fetchIpApi(entranceIp);
   }
 
-  // 4. 组装面板文字
+  // 底层判断是否直连 (判断时使用真实 IP 数字，不受打码开关影响)
   const isDirect = localInfo && proxyInfo && localInfo.ip === proxyInfo.ip;
 
-  if (localInfo) {
-    contentLines.push(`I P:  ${localInfo.ip}`); // I P 中间加空格，和下面两字对齐
+  // 封装打码器：处理隐私开关和 IPv6 丢弃逻辑
+  const formatIp = (ip) => {
+    if (PRIVACY) return '已隐藏';
+    if (ip.includes(':')) return 'IPv6 地址'; // 强行阻断 IPv6，防止它撑破面板
+    return ip;
+  };
+
+  // --- 开始组装面板文字 ---
+
+  // 1. 本地信息块 (受 HIDE_LOCAL 开关管控)
+  if (!HIDE_LOCAL && localInfo) {
+    contentLines.push(`I P:  ${formatIp(localInfo.ip)}`); // I P 中间加空格，强迫症对齐
     contentLines.push(`位置: ${localInfo.loc}`);
     contentLines.push(`网络: ${localInfo.isp}`);
   }
 
-  // 只有挂了代理才显示入口和落地
+  // 2. 代理信息块 (仅在非直连时展示)
   if (!isDirect) {
     if (entranceInfo) {
-      contentLines.push("");
-      contentLines.push(`入口: ${entranceInfo.ip}`);
+      if (contentLines.length > 0) contentLines.push(""); // 块与块之间留白
+      contentLines.push(`入口: ${formatIp(entranceInfo.ip)}`);
       contentLines.push(`位置: ${entranceInfo.loc}`);
       contentLines.push(`网络: ${entranceInfo.isp}`);
     }
     if (proxyInfo) {
-      contentLines.push("");
-      contentLines.push(`落地: ${proxyInfo.ip}`);
+      if (contentLines.length > 0) contentLines.push("");
+      contentLines.push(`落地: ${formatIp(proxyInfo.ip)}`);
       contentLines.push(`位置: ${proxyInfo.loc}`);
       contentLines.push(`网络: ${proxyInfo.isp}`);
     }
   }
 
-  // 5. 渲染面板
+  // --- 移交渲染权 ---
   $done({
-    title: title,
-    content: contentLines.join('\n'),
+    title: "网络信息",
+    content: contentLines.join('\n') || "网络状态获取中...",
     icon: PANEL_ICON
   });
 })();
 
-// ================= 核心请求逻辑 =================
+// ================= 核心请求 =================
 
-// 查本地 IP (IPIP)
+// 国内基准: IPIP
 async function fetchLocalIPIP() {
   const res = await httpGet("https://myip.ipip.net/json");
   if (!res) return null;
@@ -98,7 +98,7 @@ async function fetchLocalIPIP() {
   } catch (e) { return null; }
 }
 
-// 查国际 IP (IP-API)
+// 国际核心: IP-API (原生中文)
 async function fetchIpApi(targetIp = '') {
   const url = `http://ip-api.com/json${targetIp ? '/' + targetIp : ''}?lang=zh-CN`;
   const res = await httpGet(url);
@@ -113,7 +113,7 @@ async function fetchIpApi(targetIp = '') {
   } catch (e) { return null; }
 }
 
-// 抓取底层代理入口 IP
+// 从 Surge API 嗅探中转入口 IP
 async function getEntranceIp() {
   try {
     const res = await httpAPI('/v1/requests/recent');
@@ -125,37 +125,35 @@ async function getEntranceIp() {
   return '';
 }
 
-// ================= 数据清洗逻辑 =================
+// ================= 数据清洗 =================
 
-// 洗掉多余的省市和国家名字，保持极简
+// 洗掉没用的行政后缀和国家名，保持极简
 function formatLocation(region, city, country) {
   let locStr = `${region || ''} ${city || ''}`.trim();
   if (!locStr && country) locStr = country;
   
-  // 干掉中国前缀
   locStr = locStr.replace(/(中国|China)\s*/g, '');
-  // 干掉省市行政后缀
   locStr = locStr.replace(/(省|自治区|特别行政区|市)/g, '');
   
-  // 直辖市去重 (比如 "上海 上海" 变 "上海")
+  // 处理直辖市带来的重复 (如 "上海 上海")
   const parts = locStr.split(/\s+/).filter(i => i);
   if (parts.length === 2 && parts[0] === parts[1]) locStr = parts[0];
   
   return locStr.trim() || '未知';
 }
 
-// 洗掉 ASN 和一长串的公司后缀
+// 洗掉 ASN 和一长串的商业废话公司后缀
 function formatIsp(isp) {
   if (!isp) return '-';
   
-  // 砍掉开头的 ASXXXX
+  // 砍掉开头的 ASxxxx
   let name = isp.replace(/^AS\d+\s+/, '');
   
-  // 砍掉没用的商业后缀
+  // 黑名单过滤 (去噪)
   const trashRegex = /(?i)(,\s*)?(Co\.,\s*Ltd\.|Inc\.|LLC|Corp\.|Corporation|Limited|Services|Network|Advertising|Technology|Information|Communications)/g;
   name = name.replace(trashRegex, '').replace(/,\s*$/, '').trim();
   
-  // 防折行保护，超过 18 个字符就加省略号，不然撑破面板
+  // 保护：超过 18 个字符就加省略号，死保面板排版不换行
   if (name.length > 18) {
     name = name.substring(0, 18) + '...';
   }
@@ -165,7 +163,7 @@ function formatIsp(isp) {
 
 // ================= 基础设施 =================
 
-// 包装 GET 请求，带上强制超时机制，防雪崩卡死
+// HTTP GET 包装，带强制熔断
 function httpGet(url) {
   return new Promise((resolve) => {
     let isResolved = false;
@@ -177,7 +175,7 @@ function httpGet(url) {
       }
     });
 
-    // 强行兜底，比设定的超时多 500ms，时间一到直接切断抛弃请求
+    // 兜底
     setTimeout(() => {
       if (!isResolved) {
         isResolved = true;
@@ -187,7 +185,6 @@ function httpGet(url) {
   });
 }
 
-// 调 Surge 本地 API
 function httpAPI(path) {
   return new Promise((resolve) => {
     $httpAPI('GET', path, null, result => resolve(result));
