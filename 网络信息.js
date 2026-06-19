@@ -29,13 +29,12 @@
     if (needUpdate) {
       try {
         const freshDict = await httpGet({ url: CONFIG_URL, timeout: TIMEOUT_DIRECT });
-        // 校验一下是不是合法的 JSON，防止网络波动拉回来一个 HTML 报错页面
+        // 校验合法 JSON，防止拉取到 HTML 报错页
         JSON.parse(freshDict); 
         rawDict = freshDict;
         $persistentStore.write(rawDict, CACHE_KEY);
         $persistentStore.write(String(now), CACHE_TIME_KEY);
       } catch (e) {
-        // 如果拉取失败但本地有旧缓存，就当没发生过，继续用旧的保底
         if (!rawDict) throw new Error('首次初始化字典失败，请检查 GitHub 连通性');
       }
     }
@@ -50,7 +49,11 @@
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber)\b\.?/gi;
 
-    return { dict, t2s, ISP_KEYS, CORP_RE };
+    // 预编译无视大小写的后缀剥离正则（按长度降序，保证先匹配长后缀）
+    const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
+    const SUFFIX_RE = new RegExp(`(${sortedSuffixes.join('|')})$`, 'i');
+
+    return { dict, t2s, ISP_KEYS, CORP_RE, SUFFIX_RE };
   }
 
   const engine = await initEngine();
@@ -65,11 +68,12 @@
   }
 
   function stripSuffix(str = '') {
-    for (const suf of DICT.admin_suffixes) {
-      if (str.endsWith(suf)) {
-        const cut = str.slice(0, -suf.length).trim();
-        if (cut.length >= 2) return cut;
-      }
+    // 通过正则引擎无视大小写切除后缀
+    const match = str.match(engine.SUFFIX_RE);
+    if (match) {
+      const cut = str.slice(0, -match[0].length).trim();
+      // 保证切完后至少剩 2 个字（避免把 "沙市" 切成 "沙"）
+      if (cut.length >= 2) return cut;
     }
     return str;
   }
