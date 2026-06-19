@@ -1,9 +1,10 @@
 // 网络信息.js
 
 !(async () => {
-  // ─── 配置与持久化状态 ────────────────────────
+  // ─── 核心引擎：配置与持久化状态 ────────────────────────
   const CACHE_KEY = 'IP_INFO_DICT_V2'; 
   const CACHE_TIME_KEY = 'IP_INFO_DICT_TIME_V2';
+  // 官方短链接 + 中文字符安全编码
   const CONFIG_URL = encodeURI('https://github.com/h05n/waibucangku/raw/main/映射库.json');
   
   const TIMEOUT_DIRECT = 5;
@@ -16,17 +17,19 @@
   }
   const httpAPI = (path, method = 'GET', data = null) => new Promise(r => $httpAPI(method, path, data, r))
 
-  // 1. 自动过期拉取 + 容错机制
+  // 1. 初始化引擎：自动过期拉取 + 容错机制
   async function initEngine() {
     let rawDict = $persistentStore.read(CACHE_KEY);
     let lastTime = parseInt($persistentStore.read(CACHE_TIME_KEY) || '0', 10);
     let now = Date.now();
     
+    // 判定：如果没有缓存，或者距离上次更新超过了 24 小时 (86400000 毫秒)
     let needUpdate = !rawDict || (now - lastTime > 86400000);
     
     if (needUpdate) {
       try {
         const freshDict = await httpGet({ url: CONFIG_URL, timeout: TIMEOUT_DIRECT });
+        // 校验合法 JSON，防止拉取到 HTML 报错页
         JSON.parse(freshDict); 
         rawDict = freshDict;
         $persistentStore.write(rawDict, CACHE_KEY);
@@ -38,12 +41,15 @@
     
     const dict = JSON.parse(rawDict);
     
+    // 预编译 O(1) 繁简转换引擎
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
     const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c]);
     
+    // 预排序 ISP 键值，按长度降序保证最大匹配原则
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber)\b\.?/gi;
 
+    // 预编译无视大小写的后缀剥离正则
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
     const SUFFIX_RE = new RegExp(`(${sortedSuffixes.join('|')})$`, 'i');
 
@@ -113,7 +119,7 @@
     s = engine.t2s(s);
     const words = s.split(/\s+/).filter(Boolean);
     
-    // 单词级去重
+    // 智能单词级去重，消除重复词
     const uniqueWords = [];
     const seenWords = new Set();
     for (const w of words) {
@@ -144,7 +150,7 @@
     return {
       ip: d.query || '',
       location: formatLocation(d.countryCode, d.regionName, d.city),
-      isp: formatISP(`${d.isp || ''} ${d.as || ''}`),
+      isp: formatISP(`${d.isp || ''} ${d.as || ''}`), // 拼合 ISP 和 ASN 组织名，兜底阿里云
       asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
   }
@@ -181,7 +187,7 @@
     };
   }
 
-  // ─── 并发查询逻辑 ────────────────────────────
+  // ─── 核心并发查询逻辑 ────────────────────────────
   async function safeFetchJSON(url, extra = {}, timeout = TIMEOUT_DIRECT) {
     try { return JSON.parse(await httpGet({ url, ...extra, timeout })); } catch (e) { return null; }
   }
