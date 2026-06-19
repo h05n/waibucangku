@@ -15,7 +15,9 @@
       return [p.slice(0, i), decodeURIComponent(p.slice(i + 1))]
     })
   )
-  const IPAPI_KEY = (args.IPAPI_IS_KEY || '').trim()
+  // 有效 Key：纯字母数字，至少 16 位；过滤掉未修改的占位符文字
+  const _rawKey = (args.IPAPI_IS_KEY || '').trim()
+  const IPAPI_KEY = /^[a-zA-Z0-9_\-]{16,}$/.test(_rawKey) ? _rawKey : ''
 
   // ─────────────────────────────────────
   //  常量
