@@ -22,7 +22,7 @@
     let lastTime = parseInt($persistentStore.read(CACHE_TIME_KEY) || '0', 10);
     let now = Date.now();
     
-    let needUpdate = !rawDict || (now - lastTime > 1);
+    let needUpdate = !rawDict || (now - lastTime > 86400000);
     
     if (needUpdate) {
       try {
