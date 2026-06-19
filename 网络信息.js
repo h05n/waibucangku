@@ -47,7 +47,7 @@
     
     // 预排序 ISP 键值，按长度降序保证最大匹配原则
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
-    const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber)\b\.?/gi;
+    const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber|Co|Company|LLC|Pte|Pty)\b\.?/gi;
 
     // 预编译无视大小写的后缀剥离正则
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
@@ -59,7 +59,7 @@
   const engine = await initEngine();
   const DICT = engine.dict;
 
-  // ─── O(1) 解析算法 ────────────────────────────────
+  // ─── O(1) 极速解析算法 ────────────────────────────────
 
   function translateGeo(str = '') {
     if (!str) return '';
@@ -108,7 +108,7 @@
     let s = raw.replace(/^AS\d+\s*/i, '').trim();
     if (!s) return '';
     
-    const cleaned = s.replace(/\s*[\(\（][^\)\）]{0,30}[\)\）]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    const cleaned = s.replace(/\s*[\(\（][^\)\）]{0,30}[\)\）]\s*/g, ' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
     const cleanedL = cleaned.toLowerCase();
     const sL = s.toLowerCase();
     
@@ -150,7 +150,7 @@
     return {
       ip: d.query || '',
       location: formatLocation(d.countryCode, d.regionName, d.city),
-      isp: formatISP(`${d.isp || ''} ${d.as || ''}`), // 拼合 ISP 和 ASN 组织名，兜底阿里云
+      isp: formatISP(`${d.isp || ''} ${d.as || ''}`),
       asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
   }
