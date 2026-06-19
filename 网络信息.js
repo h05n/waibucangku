@@ -17,7 +17,7 @@
   }
   const httpAPI = (path, method = 'GET', data = null) => new Promise(r => $httpAPI(method, path, data, r))
 
-  // 1. 初始化：自动过期拉取 + 容错机制
+  // 1. 自动过期拉取 + 容错机制
   async function initEngine() {
     let rawDict = $persistentStore.read(CACHE_KEY);
     let lastTime = parseInt($persistentStore.read(CACHE_TIME_KEY) || '0', 10);
@@ -41,7 +41,7 @@
     
     const dict = JSON.parse(rawDict);
     
-    // 预编译 O(1) 繁简转换
+    // 预编译 O(1) 繁简转换引擎
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
     const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c]);
     
@@ -49,7 +49,7 @@
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber)\b\.?/gi;
 
-    // 预编译无视大小写的后缀剥离正则（按长度降序，保证先匹配长后缀）
+    // 预编译无视大小写的后缀剥离正则
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
     const SUFFIX_RE = new RegExp(`(${sortedSuffixes.join('|')})$`, 'i');
 
@@ -68,11 +68,9 @@
   }
 
   function stripSuffix(str = '') {
-    // 通过正则引擎无视大小写切除后缀
     const match = str.match(engine.SUFFIX_RE);
     if (match) {
       const cut = str.slice(0, -match[0].length).trim();
-      // 保证切完后至少剩 2 个字（避免把 "沙市" 切成 "沙"）
       if (cut.length >= 2) return cut;
     }
     return str;
@@ -140,7 +138,8 @@
     return {
       ip: d.query || '',
       location: formatLocation(d.countryCode, d.regionName, d.city),
-      isp: formatISP(d.isp || ''),
+      // 将 ISP 和 ASN 组织名拼合后一起扔进去查
+      isp: formatISP(`${d.isp || ''} ${d.as || ''}`),
       asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
   }
@@ -162,7 +161,8 @@
     return {
       ip: d.ip,
       location: formatLocation(d.country_code, d.region, d.city),
-      isp: formatISP(d.isp || d.organization || ''),
+      // 同样拼合 ip.sb 的组织字段防漏
+      isp: formatISP(`${d.isp || ''} ${d.organization || ''}`),
       asn: normalizeASN(d.asn),
     };
   }
