@@ -1,12 +1,28 @@
 // 网络信息.js
 // Surge 面板脚本 · 本地 / 入口 / 落地 IP 查询
-// 本地: myip.ipip.net(中国精准) + ip.sb(ASN) 并行
-// 落地: ip.sb 主(MaxMind，HK/JP数据中心准) + ipinfo.io 备
+// 本地: myip.ipip.net + ip.sb 并行
+// 落地: ipapi.is (有Key时) → ip.sb → ipinfo.io
 
 !(async () => {
 
+  // ─────────────────────────────────────
+  //  读取模块参数
+  // ─────────────────────────────────────
+
+  const args = Object.fromEntries(
+    ($argument || '').split('&').filter(Boolean).map(p => {
+      const i = p.indexOf('=')
+      return [p.slice(0, i), decodeURIComponent(p.slice(i + 1))]
+    })
+  )
+  const IPAPI_KEY = (args.IPAPI_IS_KEY || '').trim()
+
+  // ─────────────────────────────────────
+  //  常量
+  // ─────────────────────────────────────
+
   const TIMEOUT_DIRECT = 5    // 直连超时（秒）
-  const TIMEOUT_PROXY  = 10   // 代理查询超时（落地通过代理）
+  const TIMEOUT_PROXY  = 10   // 代理查询超时（秒）
   const RETRIES        = 2    // 重试次数
   const RETRY_DELAY    = 1000 // 重试间隔（毫秒）
 
@@ -49,9 +65,9 @@
     '關':'关','點':'点','長':'长','時':'时','為':'为','對':'对','從':'从',
     '雲':'云','廣':'广','實':'实','進':'进','發':'发','應':'应','總':'总',
     '資':'资','強':'强','區':'区','帶':'带','連':'连','億':'亿','豐':'丰',
-    '謝':'谢','請':'请','廣':'广','鐵':'铁','勝':'胜','興':'兴',
-    '來':'来','這':'这','個':'个','還':'还','無':'无','處':'处',
-    '華':'华','寬':'宽','頻':'频','龍':'龙','盤':'盘',
+    '謝':'谢','請':'请','鐵':'铁','勝':'胜','興':'兴','來':'来',
+    '這':'这','個':'个','還':'还','無':'无','華':'华','寬':'宽','頻':'频',
+    '龍':'龙','盤':'盘','賣':'卖','廣':'广',
   }
   const t2s = s => s.split('').map(c => T2S[c] || c).join('')
 
@@ -78,11 +94,11 @@
   }
 
   // ─────────────────────────────────────
-  //  地名英文 → 简体中文（美国州用全称，避免剥"州"后剩1字）
+  //  地名英文 → 简体中文
   // ─────────────────────────────────────
 
   const GEOS = {
-    // 中国省市（ipip.net 直接返回中文，此表仅作 ip.sb 兜底）
+    // 中国省市
     Beijing:'北京', Shanghai:'上海', Tianjin:'天津', Chongqing:'重庆',
     Guangdong:'广东', Zhejiang:'浙江', Jiangsu:'江苏', Shandong:'山东',
     Sichuan:'四川', Henan:'河南', Hubei:'湖北', Hunan:'湖南',
@@ -100,6 +116,7 @@
     Lanzhou:'兰州', Xining:'西宁', Yinchuan:'银川', Urumqi:'乌鲁木齐',
     Wenzhou:'温州', Wuxi:'无锡', Zhuhai:'珠海', Foshan:'佛山',
     Dongguan:'东莞', Shijiazhuang:'石家庄', Ningbo:'宁波', Yancheng:'盐城',
+    Nantong:'南通', Changzhou:'常州',
     // 香港 18 区
     'Central and Western':'中西区', Eastern:'东区', Southern:'南区',
     'Wan Chai':'湾仔', 'Sham Shui Po':'深水埗',
@@ -107,7 +124,8 @@
     'Wong Tai Sin':'黄大仙', 'Yau Tsim Mong':'油尖旺',
     'Kwai Tsing':'葵青', 'Tsuen Wan':'荃湾', 'Tuen Mun':'屯门',
     'Yuen Long':'元朗', 'Tai Po':'大埔', 'Sha Tin':'沙田',
-    'Sai Kung':'西贡', Islands:'离岛', 'Kwai Chung':'葵涌', Kowloon:'九龙',
+    'Sai Kung':'西贡', Islands:'离岛', 'Kwai Chung':'葵涌',
+    Kowloon:'九龙', 'Hong Kong':'香港',
     // 台湾
     Taipei:'台北', 'New Taipei':'新北', Taoyuan:'桃园',
     Taichung:'台中', Tainan:'台南', Kaohsiung:'高雄', Hsinchu:'新竹',
@@ -168,13 +186,24 @@
     Mumbai:'孟买', Dubai:'迪拜', Cairo:'开罗',
   }
 
+  // ─────────────────────────────────────
+  //  地名翻译（大小写不敏感）
+  // ─────────────────────────────────────
+
   function translateGeo(str = '') {
     if (!str) return ''
     const s = str.trim()
-    if (GEOS[s]) return GEOS[s]
+    const sL = s.toLowerCase()
+
+    // 精确匹配（不区分大小写）
+    for (const [en, cn] of Object.entries(GEOS)) {
+      if (en.toLowerCase() === sL) return cn
+    }
+    // 最长前缀匹配（不区分大小写）
     let best = '', bestLen = 0
     for (const [en, cn] of Object.entries(GEOS)) {
-      if (s.startsWith(en) && en.length > bestLen) {
+      const enL = en.toLowerCase()
+      if (sL.startsWith(enL) && en.length > bestLen) {
         best = cn; bestLen = en.length
       }
     }
@@ -205,29 +234,42 @@
   // 处理自治区族称：新疆维吾尔自治区 → 新疆
   function normalizeProvince(raw = '') {
     const s = raw
-      .replace(/维吾尔自治区$/, '')
-      .replace(/壮族自治区$/, '')
-      .replace(/回族自治区$/, '')
-      .replace(/藏族自治区$/, '')
-      .replace(/朝鲜族自治州$/, '')
-      .trim()
+      .replace(/维吾尔自治区$/, '').replace(/壮族自治区$/, '')
+      .replace(/回族自治区$/, '').replace(/藏族自治区$/, '')
+      .replace(/朝鲜族自治州$/, '').trim()
     return stripSuffix(s) || stripSuffix(raw) || raw
   }
 
   // ─────────────────────────────────────
-  //  ASN 规范化（处理纯数字 / 无前缀 情况）
+  //  ASN 规范化（处理纯数字 / 无前缀）
   // ─────────────────────────────────────
 
   function normalizeASN(raw) {
-    if (!raw && raw !== 0) return ''
+    if (raw === null || raw === undefined || raw === '') return ''
     const s = String(raw).trim()
-    if (!s) return ''
-    // 已有前缀："AS12345" 或 "AS12345 Org"
     const m = s.match(/\b(AS\d+)\b/i)
     if (m) return m[1].toUpperCase()
-    // 纯数字
-    if (/^\d+$/.test(s)) return `AS${s}`
+    if (/^\d+$/.test(s) && s.length > 0) return `AS${s}`
     return ''
+  }
+
+  // ─────────────────────────────────────
+  //  位置清洗：去除中英混杂中的冗余英文
+  //  例：["香港", "Hong Kong"] → ["香港"]
+  //      ["美国", "California"] → ["美国", "加利福尼亚"]（先翻译后去重）
+  // ─────────────────────────────────────
+
+  function cleanParts(parts) {
+    // 第一步：把每个部分尝试翻译成中文
+    const translated = parts.map(p => {
+      if (/[\u4e00-\u9fff]/.test(p)) return p  // 已是中文，不变
+      const cn = translateGeo(p.trim())
+      return (/[\u4e00-\u9fff]/.test(cn)) ? cn : p  // 有中文译名则替换
+    })
+
+    // 第二步：去重（去掉重复的条目）
+    const seen = new Set()
+    return translated.filter(p => p && !seen.has(p) && seen.add(p))
   }
 
   // ─────────────────────────────────────
@@ -237,6 +279,7 @@
   function formatLocation(countryCode, region, city) {
     const tR = stripSuffix(translateGeo(region))
     const tC = stripSuffix(translateGeo(city))
+
     let parts
     if (countryCode === 'CN') {
       parts = [tR, tC]
@@ -244,8 +287,8 @@
       const country = COUNTRIES[countryCode] || countryCode || ''
       parts = [country, tR || tC]
     }
-    const seen = new Set()
-    return parts.filter(Boolean).filter(p => !seen.has(p) && seen.add(p)).join(' ')
+
+    return cleanParts(parts.filter(Boolean)).join(' ')
   }
 
   // ─────────────────────────────────────
@@ -253,49 +296,27 @@
   // ─────────────────────────────────────
 
   const ISP_MAP = [
-    // 中国运营商（含骨干网名称变体）
-    ['CHINA169','中国联通'],         // 联通169骨干网
-    ['CNC CHINA169','中国联通'],
-    ['CNC','中国联通'],              // China Network Communications
-    ['China Unicom','中国联通'],
-    ['CHINANET','中国电信'],
-    ['CHINA-TELECOM','中国电信'],
-    ['China Telecom','中国电信'],
-    ['China Mobile','中国移动'],
-    ['CHINA-MOBILE','中国移动'],
-    ['CMNET','中国移动'],
-    ['China Broadnet','中国广电'],
-    ['China Tietong','铁通'],
-    ['CERNET','教育网'],
-    ['CNCGROUP','中国联通'],
-    ['AS4134','中国电信'],           // 按 ASN 兜底（不推荐，仅作保险）
-    ['AS4837','中国联通'],
-    ['AS9808','中国移动'],
-    // 中国云
-    ['Alibaba','阿里云'],    ['Aliyun','阿里云'],
-    ['Tencent','腾讯云'],    ['Huawei Cloud','华为云'],
-    ['Baidu','百度云'],      ['UCloud','UCloud'],
+    ['CHINA169','中国联通'], ['CNC CHINA169','中国联通'],
+    ['CNC','中国联通'], ['China Unicom','中国联通'],
+    ['CHINANET','中国电信'], ['China Telecom','中国电信'],
+    ['China Mobile','中国移动'], ['CMNET','中国移动'],
+    ['China Broadnet','中国广电'], ['China Tietong','铁通'],
+    ['CERNET','教育网'], ['CNCGROUP','中国联通'],
+    ['Alibaba','阿里云'], ['Aliyun','阿里云'],
+    ['Tencent','腾讯云'], ['Huawei Cloud','华为云'],
+    ['Baidu','百度云'], ['UCloud','UCloud'],
     ['21Vianet','世纪互联'], ['GDS','万国数据'],
-    // 香港
-    ['PCCW','电讯盈科'],   ['HGC','香港宽频国际'],
-    ['HKBN','香港宽频'],   ['iAdvantage','iAdvantage'],
-    ['Zhipinshang','智品尚'],
-    // 台湾
+    ['PCCW','电讯盈科'], ['HGC','香港宽频国际'],
+    ['HKBN','香港宽频'], ['Zhipinshang','智品尚'],
     ['Chunghwa','中华电信'], ['Taiwan Mobile','台湾大哥大'],
     ['FarEasTone','远传电信'],
-    // 日本
     ['NTT','NTT'], ['KDDI','KDDI'], ['SoftBank','软银'],
     ['IIJ','IIJ'], ['ARTERIA','ARTERIA'], ['OCN','OCN'],
-    ['Sakura Internet','樱花互联'],
-    // 韩国
     ['SK Telecom','SKT'], ['KT Corp','KT'], ['LG Uplus','LG U+'],
-    // 新加坡
     ['Singtel','新电信'], ['StarHub','StarHub'],
-    // 美国
     ['Comcast','Comcast'], ['AT&T','AT&T'],
     ['Verizon','Verizon'], ['T-Mobile','T-Mobile'],
     ['Level 3','Level3'], ['Lumen','Lumen'],
-    // 全球云 / CDN
     ['Amazon','AWS'], ['AMAZON','AWS'],
     ['Google','Google'], ['Microsoft','微软'],
     ['Cloudflare','Cloudflare'], ['Fastly','Fastly'],
@@ -304,16 +325,12 @@
     ['Hetzner','Hetzner'], ['OVH','OVH'],
     ['Contabo','Contabo'], ['Cogent','Cogent'],
     ['Zayo','Zayo'], ['Leaseweb','Leaseweb'],
-    // 机场 / 代理网络
     ['Misaka','Misaka'], ['DMIT','DMIT'],
     ['Zenlayer','Zenlayer'], ['Datacamp','Datacamp'],
     ['Hurricane Electric','HE.net'], ['Quadrant','Quadrant'],
-    // 欧洲
     ['Deutsche Telekom','德国电信'], ['Orange','Orange'],
     ['Vodafone','沃达丰'], ['KPN','KPN'], ['Swisscom','Swisscom'],
-    ['BT Group','BT'],
-    // 澳洲 / 中东
-    ['Telstra','Telstra'], ['Optus','Optus'],
+    ['BT Group','BT'], ['Telstra','Telstra'], ['Optus','Optus'],
     ['Etisalat','Etisalat'], ['STC','沙特电信'],
   ]
 
@@ -351,20 +368,17 @@
   //  解析各 API 响应
   // ─────────────────────────────────────
 
-  // myip.ipip.net → 中国精准位置
+  // myip.ipip.net（中国精准位置）
   function parseIPIP(d) {
     if (d?.ret !== 'ok' || !d.data?.ip) throw new Error('ipip fail')
     const loc = d.data.location || []
     const province = normalizeProvince(t2s(loc[1] || ''))
     const city = stripSuffix(t2s(loc[2] || ''))
     const isp = t2s(loc[3] || '')
-    const seen = new Set()
-    const location = [province, city]
-      .filter(Boolean).filter(p => !seen.has(p) && seen.add(p)).join(' ')
-    return { ip: d.data.ip, location, isp }
+    return { ip: d.data.ip, location: cleanParts([province, city].filter(Boolean)).join(' '), isp }
   }
 
-  // ip.sb → ASN + 全球位置
+  // ip.sb（全球位置 + ASN）
   function parseIPSB(d) {
     if (!d?.ip) throw new Error('ip.sb fail')
     return {
@@ -375,7 +389,7 @@
     }
   }
 
-  // ipinfo.io → 备用落地
+  // ipinfo.io（备用）
   function parseIPInfoIO(d) {
     if (!d?.ip) throw new Error('ipinfo fail')
     return {
@@ -386,8 +400,21 @@
     }
   }
 
+  // ipapi.is（最精准，BGP 实际路由定位）
+  function parseIPAPIIs(d) {
+    if (!d?.ip) throw new Error('ipapi.is fail')
+    const loc = d.location || {}
+    const asnInfo = d.asn || {}
+    return {
+      ip:       d.ip,
+      location: formatLocation(loc.country_code, loc.state, loc.city),
+      isp:      formatISP(asnInfo.org || d.company?.name || ''),
+      asn:      normalizeASN(asnInfo.asn),
+    }
+  }
+
   // ─────────────────────────────────────
-  //  查询本地 IP（并行：ipip.net 精准位置 + ip.sb ASN）
+  //  查询本地（ipip.net 精准位置 + ip.sb ASN，并行）
   // ─────────────────────────────────────
 
   async function queryLocal() {
@@ -395,49 +422,61 @@
       fetchJSON('https://myip.ipip.net/json', { policy: 'DIRECT' }, TIMEOUT_DIRECT).catch(() => null),
       fetchJSON('https://api-ipv4.ip.sb/geoip',  { policy: 'DIRECT' }, TIMEOUT_DIRECT).catch(() => null),
     ])
-
-    const sb = sbRaw ? parseIPSB(sbRaw) : null
-
-    // 尝试解析 ipip.net（精准）
-    let ipip = null
-    try { ipip = ipipRaw ? parseIPIP(ipipRaw) : null } catch { /* fallback */ }
-
+    const sb   = sbRaw   ? (() => { try { return parseIPSB(sbRaw) }   catch { return null } })() : null
+    const ipip = ipipRaw ? (() => { try { return parseIPIP(ipipRaw) } catch { return null } })() : null
     if (!ipip && !sb) return null
-
     return {
-      ip:       ipip?.ip  || sb?.ip  || '',
+      ip:       ipip?.ip       || sb?.ip       || '',
       location: ipip?.location || sb?.location || '',
-      isp:      ipip?.isp || sb?.isp  || '',
-      asn:      sb?.asn   || '',          // ipip.net 不返回 ASN，用 ip.sb
+      isp:      ipip?.isp      || sb?.isp      || '',
+      asn:      sb?.asn        || '',
     }
   }
 
   // ─────────────────────────────────────
-  //  查询落地 IP（ip.sb 主 + ipinfo.io 备）
-  //  ip.sb 对 HK/JP 数据中心按实际路由定位，比 ipinfo.io 准
+  //  查询落地 IP（通过代理路由）
+  //  有 Key → ipapi.is 优先（BGP实际路由，最准）
+  //  无 Key → ip.sb → ipinfo.io
   // ─────────────────────────────────────
 
   async function queryLanding() {
-    // 主：ip.sb（HTTPS，MaxMind，HK 数据中心准确）
+    if (IPAPI_KEY) {
+      try {
+        const d = await fetchJSON(
+          `https://api.ipapi.is/?key=${encodeURIComponent(IPAPI_KEY)}`,
+          {}, TIMEOUT_PROXY
+        )
+        return parseIPAPIIs(d)
+      } catch { /* fallthrough */ }
+    }
+
     try {
       const d = await fetchJSON('https://api-ipv4.ip.sb/geoip', {}, TIMEOUT_PROXY)
       return parseIPSB(d)
     } catch { /* fallthrough */ }
 
-    // 备：ipinfo.io
     const d = await fetchJSON('https://ipinfo.io/json', {}, TIMEOUT_PROXY)
     return parseIPInfoIO(d)
   }
 
   // ─────────────────────────────────────
-  //  查询指定 IP（入口，ip.sb 支持传入特定 IP）
+  //  查询指定 IP 信息（入口）
   // ─────────────────────────────────────
 
   async function queryByIP(ip) {
+    if (IPAPI_KEY) {
+      try {
+        const d = await fetchJSON(
+          `https://api.ipapi.is/?q=${encodeURIComponent(ip)}&key=${encodeURIComponent(IPAPI_KEY)}`,
+          { policy: 'DIRECT' }, TIMEOUT_DIRECT
+        )
+        return parseIPAPIIs(d)
+      } catch { /* fallthrough */ }
+    }
+
     const d = await fetchJSON(
       `https://api-ipv4.ip.sb/geoip/${encodeURIComponent(ip)}`,
-      { policy: 'DIRECT' },
-      TIMEOUT_DIRECT
+      { policy: 'DIRECT' }, TIMEOUT_DIRECT
     )
     return parseIPSB(d)
   }
@@ -449,9 +488,8 @@
   async function findEntrance(landingIP) {
     try {
       const { requests = [] } = await httpAPI('/v1/requests/recent')
-      // 落地查询用了 ip.sb 或 ipinfo.io（均为 HTTPS），remoteAddress 带 (Proxy)
       const hit = requests.slice(0, 40).find(r =>
-        /ip\.sb|ipinfo\.io/.test(r.URL || '') &&
+        /ip\.sb|ipinfo\.io|ipapi\.is/.test(r.URL || '') &&
         /\(Proxy\)/i.test(r.remoteAddress || '')
       )
       if (!hit) return null
@@ -487,7 +525,6 @@
   ])
 
   const entranceIP = await findEntrance(landing?.ip)
-
   const entrance = entranceIP
     ? await queryByIP(entranceIP).catch(() => null)
     : null
