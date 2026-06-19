@@ -1,10 +1,8 @@
 #!name=网络信息
-#!desc=本地 / 入口 / 落地 IP 查询，专为机场测试设计
-#!arguments=IPAPI_IS_KEY:（选填）在此粘贴 ipapi.is 的 Key
-#!arguments-desc=【IPAPI_IS_KEY】ipapi.is 的 API Key（选填）\n填入后落地定位切换为 BGP 实际路由追踪，可解决部分节点被错误定位的问题。\n免费申请：https://ipapi.is → 右上角 Get API Key → 注册 → 复制 Key 填入此处。\n不填时使用 ip.sb 定位（免费但对部分数据中心 IP 精度有限）。
+#!desc=本地 / 入口 / 落地 IP 查询，专为机场中转测试设计
 
 [Script]
-网络信息 = type=generic,timeout=40,script-path=https://raw.githubusercontent.com/h05n/waibucangku/refs/heads/main/网络信息.js,argument="IPAPI_IS_KEY={{{IPAPI_IS_KEY}}}"
+网络信息 = type=generic,timeout=40,script-path=https://raw.githubusercontent.com/h05n/waibucangku/refs/heads/main/网络信息.js
 
 [Panel]
 网络信息面板 = script-name=网络信息,update-interval=1
