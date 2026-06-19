@@ -56,7 +56,7 @@
     '資':'资','強':'强','區':'区','帶':'带','連':'连','億':'亿','豐':'丰',
     '謝':'谢','請':'请','鐵':'铁','勝':'胜','興':'兴','來':'来',
     '這':'这','個':'个','還':'还','無':'无','華':'华','寬':'宽','頻':'频',
-    '龍':'龙','盤':'盘','賣':'卖',
+    '龍':'龙','盘':'盘','賣':'卖',
   }
   const t2s = s => s.split('').map(c => T2S[c] || c).join('')
 
@@ -95,7 +95,7 @@
     Wuhan:'武汉', Chengdu:'成都', Suzhou:'苏州', Jinan:'济南',
     Qingdao:'青岛', Zhengzhou:'郑州', Changsha:'长沙', Shenyang:'沈阳',
     Harbin:'哈尔滨', Changchun:'长春', Taiyuan:'太原', Hefei:'合肥',
-    Fuzhou:'福州', Xiamen:'厦门', Kunming:'昆明', Nanchang:'南昌',
+    Fuzhou:'福州', X厦门:'厦门', Kunming:'昆明', Nanchang:'南昌',
     Xian:'西安', Haikou:'海口', Guiyang:'贵阳', Nanning:'南宁',
     Lanzhou:'兰州', Xining:'西宁', Yinchuan:'银川', Urumqi:'乌鲁木齐',
     Wenzhou:'温州', Wuxi:'无锡', Zhuhai:'珠海', Foshan:'佛山',
@@ -445,22 +445,10 @@
     return parseIPInfoIO(d)
   }
 
-  // ─── 入口（指定IP，直连查询）────────────────────
-  //  有Key → ipapi.is
-  //  无Key → ip-api.com lang=zh-CN（国内精准，直接中文，无拼音）→ ip.sb
+  // ─── 入口（ip-api.com lang=zh-CN（国内精准，直接中文，无拼音）→ ip.sb）────────────────────
   const IPAPI_FIELDS = 'status,message,query,country,countryCode,regionName,city,isp,as'
 
   async function queryByIP(ip) {
-    if (IPAPI_KEY) {
-      try {
-        const d = await fetchJSON(
-          `https://api.ipapi.is/?q=${encodeURIComponent(ip)}&key=${encodeURIComponent(IPAPI_KEY)}`,
-          { policy: 'DIRECT' }, TIMEOUT_DIRECT
-        )
-        return parseIPAPIIs(d)
-      } catch { /* fallthrough */ }
-    }
-
     // ip-api.com lang=zh-CN：国内 IP 直接返回中文省市，精度优于 ip.sb
     try {
       const d = await fetchJSON(
