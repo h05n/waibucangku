@@ -2,9 +2,9 @@
 
 !(async () => {
   // ─── 配置与持久化状态 ────────────────────────
-  const CACHE_KEY = 'IP_INFO_DICT_V1';
-  const CACHE_TIME_KEY = 'IP_INFO_DICT_TIME';
-  // 使用官方短链接，套上 encodeURI 确保中文字符安全请求
+  const CACHE_KEY = 'IP_INFO_DICT_V2'; 
+  const CACHE_TIME_KEY = 'IP_INFO_DICT_TIME_V2';
+  // 官方短链接 + 中文字符安全编码
   const CONFIG_URL = encodeURI('https://github.com/h05n/waibucangku/raw/main/映射库.json');
   
   const TIMEOUT_DIRECT = 5;
@@ -17,33 +17,37 @@
   }
   const httpAPI = (path, method = 'GET', data = null) => new Promise(r => $httpAPI(method, path, data, r))
 
-  // 1. 加载云端配置并预编译哈希表/正则表达式
+  // 1. 初始化：自动过期拉取 + 容错机制
   async function initEngine() {
     let rawDict = $persistentStore.read(CACHE_KEY);
-    let lastTime = $persistentStore.read(CACHE_TIME_KEY);
+    let lastTime = parseInt($persistentStore.read(CACHE_TIME_KEY) || '0', 10);
     let now = Date.now();
     
-    // 如果无缓存，或者缓存超过 7 天 (604800000 毫秒)，或者通过 argument=flush=1 强制刷新，则重新下载
-    if (!rawDict || (now - (lastTime || 0) > 604800000) || ($argument && $argument.includes('flush=1'))) {
+    // 判定：如果没有缓存，或者距离上次更新超过了 24 小时 (86400000 毫秒)
+    let needUpdate = !rawDict || (now - lastTime > 86400000);
+    
+    if (needUpdate) {
       try {
-        rawDict = await httpGet({ url: CONFIG_URL, timeout: TIMEOUT_DIRECT });
+        const freshDict = await httpGet({ url: CONFIG_URL, timeout: TIMEOUT_DIRECT });
+        // 校验一下是不是合法的 JSON，防止网络波动拉回来一个 HTML 报错页面
+        JSON.parse(freshDict); 
+        rawDict = freshDict;
         $persistentStore.write(rawDict, CACHE_KEY);
         $persistentStore.write(String(now), CACHE_TIME_KEY);
       } catch (e) {
-        if (!rawDict) throw new Error('字典下载失败，请检查网络或配置 URL');
-        // 下载失败但有旧缓存时，静默使用旧缓存
+        // 如果拉取失败但本地有旧缓存，就当没发生过，继续用旧的保底
+        if (!rawDict) throw new Error('首次初始化字典失败，请检查 GitHub 连通性');
       }
     }
     
     const dict = JSON.parse(rawDict);
     
-    // 预编译 O(1) 繁简转换（底层 C++ 正则驱动）
+    // 预编译 O(1) 繁简转换
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
     const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c]);
     
     // 预排序 ISP 键值，按长度降序保证最大匹配原则
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
-
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber)\b\.?/gi;
 
     return { dict, t2s, ISP_KEYS, CORP_RE };
@@ -57,7 +61,6 @@
   function translateGeo(str = '') {
     if (!str) return '';
     const sL = str.trim().toLowerCase();
-    // O(1) 哈希直查，找不到则执行繁简转换
     return DICT.geos[sL] || engine.t2s(str);
   }
 
@@ -107,11 +110,9 @@
     const cleanedL = cleaned.toLowerCase();
     const sL = s.toLowerCase();
     
-    // 快速查找，规避每次循环内部的 toLowerCase() 运算
     const hitKey = engine.ISP_KEYS.find(k => cleanedL.includes(k) || sL.includes(k));
     if (hitKey) return engine.t2s(DICT.isp[hitKey]);
 
-    // 兜底清洗
     s = cleaned.replace(engine.CORP_RE, ' ').replace(/\s+/g, ' ').replace(/[,\-.\s]+$/, '').trim();
     s = engine.t2s(s);
     const words = s.split(/\s+/).filter(Boolean);
