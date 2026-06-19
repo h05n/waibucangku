@@ -4,7 +4,6 @@
   // ─── 配置与持久化状态 ────────────────────────
   const CACHE_KEY = 'IP_INFO_DICT_V2'; 
   const CACHE_TIME_KEY = 'IP_INFO_DICT_TIME_V2';
-  // 官方短链接 + 中文字符安全编码
   const CONFIG_URL = encodeURI('https://github.com/h05n/waibucangku/raw/main/映射库.json');
   
   const TIMEOUT_DIRECT = 5;
@@ -23,13 +22,11 @@
     let lastTime = parseInt($persistentStore.read(CACHE_TIME_KEY) || '0', 10);
     let now = Date.now();
     
-    // 判定：如果没有缓存，或者距离上次更新超过了 24 小时 (86400000 毫秒)
     let needUpdate = !rawDict || (now - lastTime > 86400000);
     
     if (needUpdate) {
       try {
         const freshDict = await httpGet({ url: CONFIG_URL, timeout: TIMEOUT_DIRECT });
-        // 校验合法 JSON，防止拉取到 HTML 报错页
         JSON.parse(freshDict); 
         rawDict = freshDict;
         $persistentStore.write(rawDict, CACHE_KEY);
@@ -41,15 +38,12 @@
     
     const dict = JSON.parse(rawDict);
     
-    // 预编译 O(1) 繁简转换引擎
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
     const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c]);
     
-    // 预排序 ISP 键值，按长度降序保证最大匹配原则
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber)\b\.?/gi;
 
-    // 预编译无视大小写的后缀剥离正则
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
     const SUFFIX_RE = new RegExp(`(${sortedSuffixes.join('|')})$`, 'i');
 
@@ -118,7 +112,19 @@
     s = cleaned.replace(engine.CORP_RE, ' ').replace(/\s+/g, ' ').replace(/[,\-.\s]+$/, '').trim();
     s = engine.t2s(s);
     const words = s.split(/\s+/).filter(Boolean);
-    if (words.length > 2) s = words.slice(0, 2).join(' ');
+    
+    // 单词级去重
+    const uniqueWords = [];
+    const seenWords = new Set();
+    for (const w of words) {
+      const wLower = w.toLowerCase();
+      if (!seenWords.has(wLower)) {
+        seenWords.add(wLower);
+        uniqueWords.push(w);
+      }
+    }
+    
+    s = uniqueWords.slice(0, 2).join(' ');
     if (s.length > 15) s = s.slice(0, 15).trimEnd();
     return s;
   }
@@ -138,7 +144,6 @@
     return {
       ip: d.query || '',
       location: formatLocation(d.countryCode, d.regionName, d.city),
-      // 将 ISP 和 ASN 组织名拼合后一起扔进去查
       isp: formatISP(`${d.isp || ''} ${d.as || ''}`),
       asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
@@ -161,7 +166,6 @@
     return {
       ip: d.ip,
       location: formatLocation(d.country_code, d.region, d.city),
-      // 同样拼合 ip.sb 的组织字段防漏
       isp: formatISP(`${d.isp || ''} ${d.organization || ''}`),
       asn: normalizeASN(d.asn),
     };
@@ -172,7 +176,7 @@
     return {
       ip: d.ip,
       location: formatLocation(d.country, d.region, d.city),
-      isp: formatISP(d.org || ''),
+      isp: formatISP(`${d.org || ''} ${d.asn || ''}`),
       asn: normalizeASN((d.org || '').match(/^AS\d+/i)?.[0]),
     };
   }
