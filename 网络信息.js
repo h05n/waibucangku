@@ -1,65 +1,92 @@
 // 网络信息.js
-
 !(async () => {
-  // ─── 核心引擎：配置与持久化状态 ────────────────────────
-  const CACHE_KEY      = 'IP_INFO_DICT_V2';
-  const CACHE_TIME_KEY = 'IP_INFO_DICT_TIME_V2';
-  const CONFIG_URL     = encodeURI('https://github.com/h05n/waibucangku/raw/main/映射库.json');
+  // ─── 配置区 ───────────────────────────────────────────
+  const CONFIG = {
+    CACHE_KEY: 'IP_INFO_DICT_V2',
+    CACHE_TIME_KEY: 'IP_INFO_DICT_TIME_V2',
+    DICT_URL: 'https://github.com/h05n/waibucangku/raw/main/映射库.json',
+    TIMEOUT_DIRECT: 6,
+    TIMEOUT_PROXY: 8,
+    SCAN_WINDOW: 50,
+    // API URLs
+    URL_IPIP: 'https://myip.ipip.net/json',
+    URL_IPAPI: 'https://ip-api.com/json/?lang=zh-CN&fields=status,query,countryCode,regionName,city,isp,as',
+    URL_IPINFO: 'https://ipinfo.io/json',
+    URL_IPSB: 'https://api-ipv4.ip.sb/geoip',
+    URL_IPAPI_QUERY: (ip) => `https://ip-api.com/json/${encodeURIComponent(ip)}?lang=zh-CN&fields=status,query,countryCode,regionName,city,isp,as`,
+    URL_IPINFO_QUERY: (ip) => `https://ipinfo.io/${encodeURIComponent(ip)}/json`,
+    URL_IPSB_QUERY: (ip) => `https://api-ipv4.ip.sb/geoip/${encodeURIComponent(ip)}`,
+  };
 
-  const TIMEOUT_DIRECT = 5;
-  const TIMEOUT_PROXY  = 10;
+  // ─── 工具层 ───────────────────────────────────────────
+  const httpGet = (opt) => new Promise((res, rej) => {
+    $httpClient.get(opt, (err, _, body) => err ? rej(new Error(String(err))) : res(body));
+  });
 
-  function httpGet(opt) {
-    return new Promise((res, rej) =>
-      $httpClient.get(opt, (err, _, body) => err ? rej(new Error(String(err))) : res(body))
-    );
-  }
   const httpAPI = (path, method = 'GET', data = null) => new Promise(r => $httpAPI(method, path, data, r));
 
-  // ─── 初始化引擎：自动过期拉取 + 容错机制 ────────────────
-  async function initEngine() {
-    let rawDict  = $persistentStore.read(CACHE_KEY);
-    let lastTime = parseInt($persistentStore.read(CACHE_TIME_KEY) || '0', 10);
-    const now    = Date.now();
+  const safeFetchJSON = async (url, opt = {}, timeout) => {
+    try {
+      return JSON.parse(await httpGet({ url, ...opt, timeout }));
+    } catch {
+      return null;
+    }
+  };
 
+  // ─── 引擎层 (字典与正则预编译) ─────────────────────────
+  async function initEngine() {
+    let rawDict = $persistentStore.read(CONFIG.CACHE_KEY);
+    let lastTime = parseInt($persistentStore.read(CONFIG.CACHE_TIME_KEY) || '0', 10);
+    const now = Date.now();
+    
+    // 24小时更新一次字典，失败则降级使用空字典
     if (!rawDict || now - lastTime > 86400000) {
       try {
-        const fresh = await httpGet({ url: CONFIG_URL, timeout: TIMEOUT_DIRECT });
-        JSON.parse(fresh); // 校验合法 JSON，防止拉到 HTML 报错页
+        const fresh = await httpGet({ url: CONFIG.DICT_URL, timeout: CONFIG.TIMEOUT_DIRECT });
+        JSON.parse(fresh); // 校验合法 JSON
         rawDict = fresh;
-        $persistentStore.write(rawDict, CACHE_KEY);
-        $persistentStore.write(String(now), CACHE_TIME_KEY);
+        $persistentStore.write(rawDict, CONFIG.CACHE_KEY);
+        $persistentStore.write(String(now), CONFIG.CACHE_TIME_KEY);
       } catch {
-        if (!rawDict) throw new Error('首次初始化字典失败，请检查 GitHub 连通性');
+        if (!rawDict) rawDict = '{}'; 
       }
     }
-
+    
     const dict = JSON.parse(rawDict);
-
-    // 预编译 O(1) 繁简转换引擎
+    // 统一小写预处理，实现极速 O(1) 查表
+    const lowerKeys = (obj) => {
+      const o = {};
+      for (const k in obj) o[k.toLowerCase()] = obj[k];
+      return o;
+    };
+    
+    dict.t2s = dict.t2s || {};
+    dict.countries = lowerKeys(dict.countries || {});
+    dict.geos = lowerKeys(dict.geos || {});
+    dict.isp = lowerKeys(dict.isp || {});
+    dict.admin_suffixes = dict.admin_suffixes || [];
+    
+    // 预编译正则
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
-    const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c]);
-
-    // 预排序 ISP 键值，按长度降序保证最大匹配原则
+    const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c] || c);
+    
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
-
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber|Co|Company|LLC|Pte|Pty)\b\.?/gi;
-
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
-    const SUFFIX_RE = new RegExp(`(${sortedSuffixes.join('|')})$`, 'i');
-
+    const SUFFIX_RE = new RegExp(`(${sortedSuffixes.map(s => s.replace(/ /g, '\\s')).join('|')})$`, 'i');
+    
     return { dict, t2s, ISP_KEYS, CORP_RE, SUFFIX_RE };
   }
-
+  
   const engine = await initEngine();
-  const DICT   = engine.dict;
 
-  // ─── 工具函数 ────────────────────────────────────────
+  // ─── 格式化层 ─────────────────────────────────────────
+  const STOP_WORDS = /^(of|for|and|the|in|at|by|to|a|an|no)$/i;
 
   function translateGeo(str = '') {
     if (!str) return '';
     const sL = str.trim().toLowerCase();
-    return DICT.geos[sL] || engine.t2s(str);
+    return engine.dict.geos[sL] || engine.t2s(str);
   }
 
   function stripSuffix(str = '') {
@@ -69,11 +96,6 @@
       if (cut.length >= 2) return cut;
     }
     return str;
-  }
-
-  // ⑨ 简化冗余代码：SUFFIX_RE 已覆盖所有自治区后缀，无需手动预处理
-  function normalizeProvince(raw = '') {
-    return stripSuffix(raw) || raw;
   }
 
   function cleanParts(parts) {
@@ -90,181 +112,200 @@
     });
   }
 
-  // ④ 非中国 IP：城市能翻译成中文就优先用城市，翻译不了则回退到省/州（与改前一致）
-  function formatLocation(countryCode, region, city) {
+  function formatLocation(countryCode, region, city, isCN) {
     const tR = stripSuffix(translateGeo(region));
     const tC = stripSuffix(translateGeo(city));
     let parts;
-    if (countryCode === 'CN') {
+    if (isCN) {
       parts = [tR, tC];
     } else {
-      const country      = DICT.countries[(countryCode || '').toLowerCase()] || countryCode || '';
+      const country = engine.dict.countries[(countryCode || '').toLowerCase()] || countryCode || '';
       const locationPart = (/[\u4e00-\u9fff]/.test(tC) ? tC : null) || tR || tC;
       parts = [country, locationPart];
     }
     return cleanParts(parts.filter(Boolean)).join(' ');
   }
 
-  // ② 停用词列表，防止英语介词混入运营商名称
-  const STOP_WORDS = /^(of|for|and|the|in|at|by|to|a|an|no)$/i;
-
-  // ② 过滤 ASN 编号和停用词，防止泄露进显示名称
-  // ③ 移除 15 字符硬截断，两词上限已足够
   function formatISP(raw = '') {
     let s = raw.replace(/^AS\d+\s*/i, '').trim();
     if (!s) return '';
-
-    const cleaned  = s.replace(/\s*[\(\（][^\)\）]{0,30}[\)\）]\s*/g, ' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    const cleaned = s.replace(/\s*[\(\（][^\)\）]{0,30}[\)\）]\s*/g, ' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
     const cleanedL = cleaned.toLowerCase();
-    const sL       = s.toLowerCase();
-
-    const hitKey = engine.ISP_KEYS.find(k => cleanedL.includes(k) || sL.includes(k));
-    if (hitKey) return engine.t2s(DICT.isp[hitKey]);
-
+    
+    // 优先命中字典
+    const hitKey = engine.ISP_KEYS.find(k => cleanedL.includes(k));
+    if (hitKey) return engine.t2s(engine.dict.isp[hitKey]);
+    
+    // 兜底清洗
     s = cleaned.replace(engine.CORP_RE, ' ').replace(/\s+/g, ' ').replace(/[,\-.\s]+$/, '').trim();
     s = engine.t2s(s);
-
+    
     const uniqueWords = [];
-    const seenWords   = new Set();
+    const seenWords = new Set();
     for (const w of s.split(/\s+/).filter(Boolean)) {
       const wL = w.toLowerCase();
-      if (!seenWords.has(wL)) { seenWords.add(wL); uniqueWords.push(w); }
+      if (!seenWords.has(wL)) {
+        seenWords.add(wL);
+        if (!/^AS\d+$/i.test(w) && !STOP_WORDS.test(w)) uniqueWords.push(w);
+      }
     }
-
-    // ② 过滤 ASN 编号（如 AS5650）和英语停用词（of / the / in …）
-    const filteredWords = uniqueWords.filter(w => !/^AS\d+$/i.test(w) && !STOP_WORDS.test(w));
-    return filteredWords.slice(0, 2).join(' ');
+    return uniqueWords.slice(0, 2).join(' ');
   }
 
   function normalizeASN(raw) {
     if (raw == null || raw === '') return '';
-    const s = String(raw).trim();
-    const m = s.match(/\b(AS\d+)\b/i);
+    const m = String(raw).trim().match(/\b(AS\d+)\b/i);
     if (m) return m[1].toUpperCase();
-    if (/^\d+$/.test(s)) return `AS${s}`;
+    if (/^\d+$/.test(raw)) return `AS${raw}`;
     return '';
   }
 
-  // ─── 解析器 ─────────────────────────────────────────
-
-  function parseIPAPI(d) {
-    if (d.status !== 'success') throw new Error('ip-api fail');
+  // ─── 解析器层 ─────────────────────────────────────────
+  const parseIPAPI = (d) => {
+    if (d?.status !== 'success') return null;
     return {
-      ip:       d.query || '',
-      location: formatLocation(d.countryCode, d.regionName, d.city),
-      isp:      formatISP(`${d.isp || ''} ${d.as || ''}`),
-      asn:      normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
+      ip: d.query || '',
+      location: formatLocation(d.countryCode, d.regionName, d.city, d.countryCode === 'CN'),
+      isp: formatISP(`${d.isp || ''} ${d.as || ''}`),
+      asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
-  }
+  };
 
-  // ⑧ IPIP 运营商名同样经过 formatISP 标准化，与其他来源保持一致
-  function parseIPIP(d) {
-    if (d?.ret !== 'ok' || !d.data?.ip) throw new Error('ipip fail');
-    const loc      = d.data.location || [];
-    const province = normalizeProvince(engine.t2s(loc[1] || ''));
-    const city     = stripSuffix(engine.t2s(loc[2] || ''));
+  const parseIPIP = (d) => {
+    if (d?.ret !== 'ok' || !d.data?.ip) return null;
+    const loc = d.data.location || [];
+    const province = stripSuffix(engine.t2s(loc[1] || ''));
+    const city = stripSuffix(engine.t2s(loc[2] || ''));
     return {
-      ip:       d.data.ip,
+      ip: d.data.ip,
       location: cleanParts([province, city].filter(Boolean)).join(' '),
-      isp:      formatISP(engine.t2s(loc[3] || '')),
+      isp: formatISP(engine.t2s(loc[3] || '')),
+      asn: '',
     };
-  }
+  };
 
-  function parseIPSB(d) {
-    if (!d?.ip) throw new Error('ip.sb fail');
+  const parseIPSB = (d) => {
+    if (!d?.ip) return null;
     return {
-      ip:       d.ip,
-      location: formatLocation(d.country_code, d.region, d.city),
-      isp:      formatISP(`${d.isp || ''} ${d.organization || ''}`),
-      asn:      normalizeASN(d.asn),
+      ip: d.ip,
+      location: formatLocation(d.country_code, d.region, d.city, d.country_code === 'CN'),
+      isp: formatISP(`${d.isp || ''} ${d.organization || ''}`),
+      asn: normalizeASN(d.asn),
     };
-  }
+  };
 
-  function parseIPInfoIO(d) {
-    if (!d?.ip) throw new Error('ipinfo fail');
+  const parseIPInfoIO = (d) => {
+    if (!d?.ip) return null;
     return {
-      ip:       d.ip,
-      location: formatLocation(d.country, d.region, d.city),
-      isp:      formatISP(`${d.org || ''} ${d.asn || ''}`),
-      asn:      normalizeASN((d.org || '').match(/^AS\d+/i)?.[0]),
+      ip: d.ip,
+      location: formatLocation(d.country, d.region, d.city, d.country === 'CN'),
+      isp: formatISP(`${d.org || ''} ${d.asn || ''}`),
+      asn: normalizeASN((d.org || '').match(/^AS\d+/i)?.[0]),
     };
+  };
+
+  // ─── 数据合并层 (字段级交叉补全) ──────────────────────
+  function mergeResults(priorityList) {
+    const result = { ip: '', location: '', isp: '', asn: '' };
+    for (const key of ['ip', 'location', 'isp', 'asn']) {
+      for (const data of priorityList) {
+        if (data && data[key]) {
+          result[key] = data[key];
+          break;
+        }
+      }
+    }
+    return result;
   }
 
-  // ─── 核心并发查询逻辑 ────────────────────────────────
-
-  async function safeFetchJSON(url, extra = {}, timeout = TIMEOUT_DIRECT) {
-    try { return JSON.parse(await httpGet({ url, ...extra, timeout })); } catch { return null; }
-  }
-
+  // ─── 查询层 ───────────────────────────────────────────
   async function queryLocal() {
-    const [ipipRaw, ipapiRaw] = await Promise.all([
-      safeFetchJSON('https://myip.ipip.net/json', { policy: 'DIRECT' }, TIMEOUT_DIRECT),
-      safeFetchJSON('http://ip-api.com/json/?lang=zh-CN&fields=status,query,countryCode,regionName,city,isp,as', { policy: 'DIRECT' }, TIMEOUT_DIRECT),
+    const [ipipRaw, ipapiRaw, ipinfoRaw] = await Promise.allSettled([
+      safeFetchJSON(CONFIG.URL_IPIP, { policy: 'DIRECT' }, CONFIG.TIMEOUT_DIRECT),
+      safeFetchJSON(CONFIG.URL_IPAPI, { policy: 'DIRECT' }, CONFIG.TIMEOUT_DIRECT),
+      safeFetchJSON(CONFIG.URL_IPINFO, { policy: 'DIRECT' }, CONFIG.TIMEOUT_DIRECT)
     ]);
-
-    const ipip  = ipipRaw  ? (() => { try { return parseIPIP(ipipRaw);  } catch { return null; } })() : null;
-    const ipapi = ipapiRaw?.status === 'success' ? parseIPAPI(ipapiRaw) : null;
-
-    if (!ipip && !ipapi) return null;
-    return {
-      ip:       ipip?.ip       || ipapi?.ip       || '',
-      location: ipip?.location || ipapi?.location || '',
-      isp:      ipip?.isp      || ipapi?.isp      || '',
-      asn:      ipapi?.asn || '',
-    };
+    
+    const ipip = ipipRaw.status === 'fulfilled' ? parseIPIP(ipipRaw.value) : null;
+    const ipapi = ipapiRaw.status === 'fulfilled' ? parseIPAPI(ipapiRaw.value) : null;
+    const ipinfo = ipinfoRaw.status === 'fulfilled' ? parseIPInfoIO(ipinfoRaw.value) : null;
+    
+    if (!ipip && !ipapi && !ipinfo) return null;
+    // 本地优先级：ipip (国内最准) > ipapi > ipinfo
+    return mergeResults([ipip, ipapi, ipinfo]);
   }
 
   async function queryLanding() {
-    try { return parseIPSB(await safeFetchJSON('https://api-ipv4.ip.sb/geoip', {}, TIMEOUT_PROXY)); } catch { /* fallthrough */ }
-    try { return parseIPInfoIO(await safeFetchJSON('https://ipinfo.io/json', {}, TIMEOUT_PROXY)); } catch { return null; }
+    const [ipsbRaw, ipinfoRaw, ipapiRaw] = await Promise.allSettled([
+      safeFetchJSON(CONFIG.URL_IPSB, {}, CONFIG.TIMEOUT_PROXY),
+      safeFetchJSON(CONFIG.URL_IPINFO, {}, CONFIG.TIMEOUT_PROXY),
+      safeFetchJSON(CONFIG.URL_IPAPI, {}, CONFIG.TIMEOUT_PROXY)
+    ]);
+    
+    const ipsb = ipsbRaw.status === 'fulfilled' ? parseIPSB(ipsbRaw.value) : null;
+    const ipinfo = ipinfoRaw.status === 'fulfilled' ? parseIPInfoIO(ipinfoRaw.value) : null;
+    const ipapi = ipapiRaw.status === 'fulfilled' ? parseIPAPI(ipapiRaw.value) : null;
+    
+    if (!ipsb && !ipinfo && !ipapi) return null;
+    // 落地优先级：ipsb (国外最准) > ipinfo > ipapi
+    return mergeResults([ipsb, ipinfo, ipapi]);
   }
 
   async function queryEntrance(ip) {
-    const d = await safeFetchJSON(
-      `http://ip-api.com/json/${encodeURIComponent(ip)}?lang=zh-CN&fields=status,query,countryCode,regionName,city,isp,as`,
-      { policy: 'DIRECT' }, TIMEOUT_DIRECT
-    );
-    if (d?.status === 'success') return parseIPAPI(d);
-
-    const fallback = await safeFetchJSON(`https://api-ipv4.ip.sb/geoip/${encodeURIComponent(ip)}`, { policy: 'DIRECT' }, TIMEOUT_DIRECT);
-    return fallback ? parseIPSB(fallback) : null;
+    const [ipsbRaw, ipinfoRaw, ipapiRaw] = await Promise.allSettled([
+      safeFetchJSON(CONFIG.URL_IPSB_QUERY(ip), {}, CONFIG.TIMEOUT_PROXY),
+      safeFetchJSON(CONFIG.URL_IPINFO_QUERY(ip), {}, CONFIG.TIMEOUT_PROXY),
+      safeFetchJSON(CONFIG.URL_IPAPI_QUERY(ip), {}, CONFIG.TIMEOUT_PROXY)
+    ]);
+    
+    const ipsb = ipsbRaw.status === 'fulfilled' ? parseIPSB(ipsbRaw.value) : null;
+    const ipinfo = ipinfoRaw.status === 'fulfilled' ? parseIPInfoIO(ipinfoRaw.value) : null;
+    const ipapi = ipapiRaw.status === 'fulfilled' ? parseIPAPI(ipapiRaw.value) : null;
+    
+    if (!ipsb && !ipinfo && !ipapi) return null;
+    return mergeResults([ipsb, ipinfo, ipapi]);
   }
 
-  // ⑦ 扫描窗口从 40 扩大至 100 条，减少漏检入口 IP 的概率
   async function findEntrance(landingIP) {
     try {
       const { requests = [] } = await httpAPI('/v1/requests/recent');
-      const hit = requests.slice(0, 100).find(
-        r => /ip\.sb|ipinfo\.io/.test(r.URL || '') && /\(Proxy\)/i.test(r.remoteAddress || '')
+      // 扫描最近 50 条记录中带 (Proxy) 标记的查 IP 请求
+      const hit = requests.slice(0, CONFIG.SCAN_WINDOW).find(r => 
+        /ip\.sb|ipinfo\.io|ip-api\.com|ipip\.net/.test(r.URL || '') && 
+        /\(Proxy\)/i.test(r.remoteAddress || '')
       );
       if (!hit) return null;
       const ip = (hit.remoteAddress || '')
         .replace(/\s*\(Proxy\)\s*/gi, '').trim()
         .replace(/:\d+$/, '').replace(/^\[(.+)\]$/, '$1');
-      return ip && ip !== landingIP ? ip : null;
-    } catch { return null; }
+      // 纯 IP 比对：与落地 IP 不同则确认为入口
+      return (ip && ip !== landingIP) ? ip : null;
+    } catch {
+      return null;
+    }
   }
 
-  // ─── UI 渲染 ─────────────────────────────────────────
-
+  // ─── UI 渲染层 ────────────────────────────────────────
   function block(label, ip, info) {
     const lines = [`${label}：${ip || '-'}`];
     if (info?.location) lines.push(`位置：${info.location}`);
-    if (info?.isp)      lines.push(`网络：${info.isp}`);
-    if (info?.asn)      lines.push(`代号：${info.asn}`);
+    if (info?.isp) lines.push(`网络：${info.isp}`);
+    if (info?.asn) lines.push(`代号：${info.asn}`);
     return lines.join('\n');
   }
 
+  // ─── 主流程 ───────────────────────────────────────────
   const [local, landing] = await Promise.all([queryLocal(), queryLanding()]);
   const entranceIP = await findEntrance(landing?.ip);
-  const entrance   = entranceIP ? await queryEntrance(entranceIP) : null;
+  const entrance = entranceIP ? await queryEntrance(entranceIP) : null;
 
   const sections = [block('本地', local?.ip, local)];
   if (entranceIP) sections.push(block('入口', entranceIP, entrance));
   sections.push(block('落地', landing?.ip, landing));
 
   const pad = n => String(n).padStart(2, '0');
-  const t   = new Date();
+  const t = new Date();
   sections.push(`记录时间：${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`);
 
   $done({ title: '网络信息', content: sections.join('\n\n') });
