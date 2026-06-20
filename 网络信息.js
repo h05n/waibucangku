@@ -33,6 +33,9 @@
     }
   };
 
+  // 转义正则特殊字符
+  const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   // ─── 引擎层 (字典与正则预编译) ─────────────────────────
   async function initEngine() {
     let rawDict = $persistentStore.read(CONFIG.CACHE_KEY);
@@ -71,16 +74,20 @@
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
     const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c] || c);
 
-    // 预编译长词优先的 ISP 与 GEO 匹配键，过滤过短词防误伤
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
-    const GEO_KEYS = Object.keys(dict.geos).filter(k => k.length > 3).sort((a, b) => b.length - a.length);
+    
+    // 预编译地理提取正则：提取纯英文且长度大于3的词，长词优先，防止误匹配
+    const GEO_EXTRACT_KEYS = Object.keys(dict.geos)
+      .filter(k => /^[a-z\s]+$/i.test(k) && k.length > 3)
+      .sort((a, b) => b.length - a.length);
+    const GEO_EXTRACT_RE = new RegExp(`\\b(${GEO_EXTRACT_KEYS.map(escapeRegExp).join('|')})\\b`, 'ig');
 
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber|Co|Company|LLC|Pte|Pty)\b\.?/gi;
 
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
     const SUFFIX_RE = new RegExp(`(${sortedSuffixes.map(s => s.replace(/ /g, '\\s')).join('|')})$`, 'i');
 
-    return { dict, t2s, ISP_KEYS, GEO_KEYS, CORP_RE, SUFFIX_RE };
+    return { dict, t2s, ISP_KEYS, GEO_EXTRACT_RE, CORP_RE, SUFFIX_RE };
   }
 
   const engine = await initEngine();
@@ -118,29 +125,24 @@
     });
   }
 
-  // 兜底提取：当省市数据缺失时，从原始 ISP 字符串中精准提取地理信息
-  function extractGeoFromISP(rawISP = '') {
-    if (!rawISP) return '';
-    const lowerISP = rawISP.toLowerCase();
-    for (const k of engine.GEO_KEYS) {
-      if (lowerISP.includes(k)) {
-        const translated = engine.dict.geos[k];
-        if (/[\u4e00-\u9fff]/.test(translated)) {
-          return translated;
-        }
-      }
+  // 极速提取：当省市缺失时，从原始 ISP/Org 字符串中动态正则提取地理信息
+  function extractGeoFromText(text = '') {
+    if (!text || !engine.GEO_EXTRACT_RE) return '';
+    const match = text.match(engine.GEO_EXTRACT_RE);
+    if (match && match[0]) {
+      const cn = engine.dict.geos[match[0].toLowerCase()];
+      if (/[\u4e00-\u9fff]/.test(cn)) return cn;
     }
     return '';
   }
 
-  function formatLocation(countryCode, region, city, isCN, rawISP = '') {
+  function formatLocation(countryCode, region, city, isCN, fallbackGeo = '') {
     let tR = stripSuffix(translateGeo(region));
     let tC = stripSuffix(translateGeo(city));
 
-    // 兜底：如果省市均为空，尝试从 ISP 中提取地理信息
-    if (!tR && !tC) {
-      const extracted = extractGeoFromISP(rawISP);
-      if (extracted) tC = extracted;
+    // 兜底：如果省市均为空，使用提取到的地理信息
+    if (!tR && !tC && fallbackGeo) {
+      tC = fallbackGeo;
     }
 
     let parts;
@@ -195,9 +197,10 @@
   const parseIPAPI = (d) => {
     if (d?.status !== 'success') return null;
     const rawISP = `${d.isp || ''} ${d.as || ''}`;
+    const fallbackGeo = (!d.regionName && !d.city) ? extractGeoFromText(rawISP) : '';
     return {
       ip: d.query || '',
-      location: formatLocation(d.countryCode, d.regionName, d.city, d.countryCode === 'CN', rawISP),
+      location: formatLocation(d.countryCode, d.regionName, d.city, d.countryCode === 'CN', fallbackGeo),
       isp: formatISP(rawISP),
       asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
@@ -219,9 +222,10 @@
   const parseIPSB = (d) => {
     if (!d?.ip) return null;
     const rawISP = `${d.isp || ''} ${d.organization || ''}`;
+    const fallbackGeo = (!d.region && !d.city) ? extractGeoFromText(rawISP) : '';
     return {
       ip: d.ip,
-      location: formatLocation(d.country_code, d.region, d.city, d.country_code === 'CN', rawISP),
+      location: formatLocation(d.country_code, d.region, d.city, d.country_code === 'CN', fallbackGeo),
       isp: formatISP(rawISP),
       asn: normalizeASN(d.asn),
     };
@@ -230,9 +234,10 @@
   const parseIPInfoIO = (d) => {
     if (!d?.ip) return null;
     const rawISP = `${d.org || ''} ${d.asn || ''}`;
+    const fallbackGeo = (!d.region && !d.city) ? extractGeoFromText(rawISP) : '';
     return {
       ip: d.ip,
-      location: formatLocation(d.country, d.region, d.city, d.country === 'CN', rawISP),
+      location: formatLocation(d.country, d.region, d.city, d.country === 'CN', fallbackGeo),
       isp: formatISP(rawISP),
       asn: normalizeASN((d.org || '').match(/^AS\d+/i)?.[0]),
     };
