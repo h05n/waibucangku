@@ -38,7 +38,7 @@
     let rawDict = $persistentStore.read(CONFIG.CACHE_KEY);
     let lastTime = parseInt($persistentStore.read(CONFIG.CACHE_TIME_KEY) || '0', 10);
     const now = Date.now();
-    
+
     // 24小时更新一次字典，失败则降级使用空字典
     if (!rawDict || now - lastTime > 86400000) {
       try {
@@ -48,36 +48,41 @@
         $persistentStore.write(rawDict, CONFIG.CACHE_KEY);
         $persistentStore.write(String(now), CONFIG.CACHE_TIME_KEY);
       } catch {
-        if (!rawDict) rawDict = '{}'; 
+        if (!rawDict) rawDict = '{}';
       }
     }
-    
+
     const dict = JSON.parse(rawDict);
+
     // 统一小写预处理，实现极速 O(1) 查表
     const lowerKeys = (obj) => {
       const o = {};
       for (const k in obj) o[k.toLowerCase()] = obj[k];
       return o;
     };
-    
+
     dict.t2s = dict.t2s || {};
     dict.countries = lowerKeys(dict.countries || {});
     dict.geos = lowerKeys(dict.geos || {});
     dict.isp = lowerKeys(dict.isp || {});
     dict.admin_suffixes = dict.admin_suffixes || [];
-    
+
     // 预编译正则
     const T2S_REGEX = new RegExp(`[${Object.keys(dict.t2s).join('')}]`, 'g');
     const t2s = s => s.replace(T2S_REGEX, c => dict.t2s[c] || c);
-    
+
+    // 预编译长词优先的 ISP 与 GEO 匹配键，过滤过短词防误伤
     const ISP_KEYS = Object.keys(dict.isp).sort((a, b) => b.length - a.length);
+    const GEO_KEYS = Object.keys(dict.geos).filter(k => k.length > 3).sort((a, b) => b.length - a.length);
+
     const CORP_RE = /\b(Technology|Technologies|Telecommunication|Telecommunications|Communication|Communications|Network|Networks|Internet|Service|Services|Telecom|Limited|Ltd|Corp|Corporation|Inc|Incorporated|Group|Global|International|Holdings|Solutions|Systems|Enterprise|Enterprises|Electric|Electron|Information|Data|Cloud|Digital|Media|Connect|Fiber|Co|Company|LLC|Pte|Pty)\b\.?/gi;
+
     const sortedSuffixes = dict.admin_suffixes.sort((a, b) => b.length - a.length);
     const SUFFIX_RE = new RegExp(`(${sortedSuffixes.map(s => s.replace(/ /g, '\\s')).join('|')})$`, 'i');
-    
-    return { dict, t2s, ISP_KEYS, CORP_RE, SUFFIX_RE };
+
+    return { dict, t2s, ISP_KEYS, GEO_KEYS, CORP_RE, SUFFIX_RE };
   }
-  
+
   const engine = await initEngine();
 
   // ─── 格式化层 ─────────────────────────────────────────
@@ -104,6 +109,7 @@
       const cn = translateGeo(p.trim());
       return /[\u4e00-\u9fff]/.test(cn) ? cn : p;
     });
+
     const seen = new Set();
     return translated.filter(p => {
       if (!p || seen.has(p)) return false;
@@ -112,9 +118,31 @@
     });
   }
 
-  function formatLocation(countryCode, region, city, isCN) {
-    const tR = stripSuffix(translateGeo(region));
-    const tC = stripSuffix(translateGeo(city));
+  // 兜底提取：当省市数据缺失时，从原始 ISP 字符串中精准提取地理信息
+  function extractGeoFromISP(rawISP = '') {
+    if (!rawISP) return '';
+    const lowerISP = rawISP.toLowerCase();
+    for (const k of engine.GEO_KEYS) {
+      if (lowerISP.includes(k)) {
+        const translated = engine.dict.geos[k];
+        if (/[\u4e00-\u9fff]/.test(translated)) {
+          return translated;
+        }
+      }
+    }
+    return '';
+  }
+
+  function formatLocation(countryCode, region, city, isCN, rawISP = '') {
+    let tR = stripSuffix(translateGeo(region));
+    let tC = stripSuffix(translateGeo(city));
+
+    // 兜底：如果省市均为空，尝试从 ISP 中提取地理信息
+    if (!tR && !tC) {
+      const extracted = extractGeoFromISP(rawISP);
+      if (extracted) tC = extracted;
+    }
+
     let parts;
     if (isCN) {
       parts = [tR, tC];
@@ -123,24 +151,25 @@
       const locationPart = (/[\u4e00-\u9fff]/.test(tC) ? tC : null) || tR || tC;
       parts = [country, locationPart];
     }
+
     return cleanParts(parts.filter(Boolean)).join(' ');
   }
 
   function formatISP(raw = '') {
     let s = raw.replace(/^AS\d+\s*/i, '').trim();
     if (!s) return '';
-    
+
     const cleaned = s.replace(/\s*[\(\（][^\)\）]{0,30}[\)\）]\s*/g, ' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
     const cleanedL = cleaned.toLowerCase();
-    
+
     // 优先命中字典
     const hitKey = engine.ISP_KEYS.find(k => cleanedL.includes(k));
     if (hitKey) return engine.t2s(engine.dict.isp[hitKey]);
-    
+
     // 兜底清洗
     s = cleaned.replace(engine.CORP_RE, ' ').replace(/\s+/g, ' ').replace(/[,\-.\s]+$/, '').trim();
     s = engine.t2s(s);
-    
+
     const uniqueWords = [];
     const seenWords = new Set();
     for (const w of s.split(/\s+/).filter(Boolean)) {
@@ -150,6 +179,7 @@
         if (!/^AS\d+$/i.test(w) && !STOP_WORDS.test(w)) uniqueWords.push(w);
       }
     }
+
     return uniqueWords.slice(0, 2).join(' ');
   }
 
@@ -164,10 +194,11 @@
   // ─── 解析器层 ─────────────────────────────────────────
   const parseIPAPI = (d) => {
     if (d?.status !== 'success') return null;
+    const rawISP = `${d.isp || ''} ${d.as || ''}`;
     return {
       ip: d.query || '',
-      location: formatLocation(d.countryCode, d.regionName, d.city, d.countryCode === 'CN'),
-      isp: formatISP(`${d.isp || ''} ${d.as || ''}`),
+      location: formatLocation(d.countryCode, d.regionName, d.city, d.countryCode === 'CN', rawISP),
+      isp: formatISP(rawISP),
       asn: normalizeASN((d.as || '').match(/\b(AS\d+)\b/i)?.[1]),
     };
   };
@@ -187,20 +218,22 @@
 
   const parseIPSB = (d) => {
     if (!d?.ip) return null;
+    const rawISP = `${d.isp || ''} ${d.organization || ''}`;
     return {
       ip: d.ip,
-      location: formatLocation(d.country_code, d.region, d.city, d.country_code === 'CN'),
-      isp: formatISP(`${d.isp || ''} ${d.organization || ''}`),
+      location: formatLocation(d.country_code, d.region, d.city, d.country_code === 'CN', rawISP),
+      isp: formatISP(rawISP),
       asn: normalizeASN(d.asn),
     };
   };
 
   const parseIPInfoIO = (d) => {
     if (!d?.ip) return null;
+    const rawISP = `${d.org || ''} ${d.asn || ''}`;
     return {
       ip: d.ip,
-      location: formatLocation(d.country, d.region, d.city, d.country === 'CN'),
-      isp: formatISP(`${d.org || ''} ${d.asn || ''}`),
+      location: formatLocation(d.country, d.region, d.city, d.country === 'CN', rawISP),
+      isp: formatISP(rawISP),
       asn: normalizeASN((d.org || '').match(/^AS\d+/i)?.[0]),
     };
   };
@@ -226,11 +259,11 @@
       safeFetchJSON(CONFIG.URL_IPAPI, { policy: 'DIRECT' }, CONFIG.TIMEOUT_DIRECT),
       safeFetchJSON(CONFIG.URL_IPINFO, { policy: 'DIRECT' }, CONFIG.TIMEOUT_DIRECT)
     ]);
-    
+
     const ipip = ipipRaw.status === 'fulfilled' ? parseIPIP(ipipRaw.value) : null;
     const ipapi = ipapiRaw.status === 'fulfilled' ? parseIPAPI(ipapiRaw.value) : null;
     const ipinfo = ipinfoRaw.status === 'fulfilled' ? parseIPInfoIO(ipinfoRaw.value) : null;
-    
+
     if (!ipip && !ipapi && !ipinfo) return null;
     // 本地优先级：ipip (国内最准) > ipapi > ipinfo
     return mergeResults([ipip, ipapi, ipinfo]);
@@ -242,11 +275,11 @@
       safeFetchJSON(CONFIG.URL_IPINFO, {}, CONFIG.TIMEOUT_PROXY),
       safeFetchJSON(CONFIG.URL_IPAPI, {}, CONFIG.TIMEOUT_PROXY)
     ]);
-    
+
     const ipsb = ipsbRaw.status === 'fulfilled' ? parseIPSB(ipsbRaw.value) : null;
     const ipinfo = ipinfoRaw.status === 'fulfilled' ? parseIPInfoIO(ipinfoRaw.value) : null;
     const ipapi = ipapiRaw.status === 'fulfilled' ? parseIPAPI(ipapiRaw.value) : null;
-    
+
     if (!ipsb && !ipinfo && !ipapi) return null;
     // 落地优先级：ipsb (国外最准) > ipinfo > ipapi
     return mergeResults([ipsb, ipinfo, ipapi]);
@@ -258,11 +291,11 @@
       safeFetchJSON(CONFIG.URL_IPINFO_QUERY(ip), {}, CONFIG.TIMEOUT_PROXY),
       safeFetchJSON(CONFIG.URL_IPAPI_QUERY(ip), {}, CONFIG.TIMEOUT_PROXY)
     ]);
-    
+
     const ipsb = ipsbRaw.status === 'fulfilled' ? parseIPSB(ipsbRaw.value) : null;
     const ipinfo = ipinfoRaw.status === 'fulfilled' ? parseIPInfoIO(ipinfoRaw.value) : null;
     const ipapi = ipapiRaw.status === 'fulfilled' ? parseIPAPI(ipapiRaw.value) : null;
-    
+
     if (!ipsb && !ipinfo && !ipapi) return null;
     return mergeResults([ipsb, ipinfo, ipapi]);
   }
@@ -276,9 +309,11 @@
         /\(Proxy\)/i.test(r.remoteAddress || '')
       );
       if (!hit) return null;
+
       const ip = (hit.remoteAddress || '')
         .replace(/\s*\(Proxy\)\s*/gi, '').trim()
         .replace(/:\d+$/, '').replace(/^\[(.+)\]$/, '$1');
+
       // 纯 IP 比对：与落地 IP 不同则确认为入口
       return (ip && ip !== landingIP) ? ip : null;
     } catch {
@@ -309,5 +344,4 @@
   sections.push(`记录时间：${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`);
 
   $done({ title: '网络信息', content: sections.join('\n\n') });
-
 })().catch(e => $done({ title: '网络信息', content: `组件异常：${e.message}` }));
