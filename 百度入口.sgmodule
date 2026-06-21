@@ -1,6 +1,0 @@
-#!name=百度入口节点
-#!desc=独立注入百度入口节点。请配合 Sub-Store 为机场节点添加 underlying-proxy 使用。
-#!system=ios
-
-[Proxy]
-百度入口 = http, cloudnproxy.n.shifen.com, 443, headers=X-T5-Auth:683556433;Host:153.3.236.22:443
