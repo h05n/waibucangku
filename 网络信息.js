@@ -11,17 +11,17 @@
   const CFG = {
     // 字典文件 URL（映射库.json 的 GitHub 地址）
     DICT_URL:  encodeURI('https://github.com/h05n/waibucangku/raw/main/映射库.json'),
-    // 直连请求超时（秒）。调高至 7s，弱网下减少两源同时超时的概率
-    T_DIRECT:  7,
+    // 直连请求超时（秒）。调高可以减少弱网下多源同时超时的概率
+    T_DIRECT:  5,
     // 代理请求超时（秒）。落地查询走代理，适当给长些
-    T_PROXY:   10,
+    T_PROXY:   5,
     // 每个数据源的最大重试次数（正式请求 + RETRIES 次重试）
     RETRIES:   1,
     // 字典缓存有效期：24 小时
     DICT_TTL:  86400000,
     // 查询结果缓存有效期：5 分钟
-    // 配合 update-interval=30 使用：30s 内同一节点直接返回缓存，零网络请求
-    CACHE_TTL: 300000,
+    // 配合 update-interval=1 使用：1s 内同一节点直接返回缓存，零网络请求
+    CACHE_TTL: 10000,
   };
 
   // ══════════════════════════════════════════════════════
