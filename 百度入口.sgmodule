@@ -1,9 +1,0 @@
-#!name=百度入口节点-纯净版
-#!desc=严格遵循原版 JSON 配置，剔除导致 Surge 报错的非法符号。
-#!system=ios
-
-[Proxy]
-百度入口 = http, cloudnproxy.n.shifen.com, 443, headers="X-T5-Auth:683556433;Host:153.3.236.22:443"
-
-[Proxy Group]
-测试入口组 = select, 百度入口
