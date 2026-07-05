@@ -1,12 +1,16 @@
-#!name=异环自动化
+#!name=异环签到
 #!desc=塔吉多与云异环自动签到
-#!param=CaptureSwitch, default="", desc="抓包开关：填入 # 即可关闭抓包功能"
+
+[Argument]
+# 声明一个外部参数，Surge 会自动在模块列表生成一个输入框
+CaptureSwitch = type=string, default="", title="抓包开关", desc="默认留空为开启。抓包成功后填入 # 即可彻底关闭抓包功能"
 
 [Script]
-# 这里的 argument 动态引用了上面声明的 CaptureSwitch 变量
-异环Token抓取 = type=http-request, pattern=^https:\/\/(bbs-api\.tajiduo\.com|user\.laohu\.com)\/.*, requires-body=1, max-size=0, script-path=https://raw.githubusercontent.com/你的用户名/你的仓库/main/异环抓包.js, argument="{CaptureSwitch}", timeout=10
+# 这里通过 {CaptureSwitch} 动态接收你在 Surge 面板里输入的值
+异环Token抓取 = type=http-request, pattern=^https:\/\/(bbs-api\.tajiduo\.com|user\.laohu\.com)\/.*, requires-body=1, max-size=0, script-path=https://github.com/h05n/waibucangku/raw/main/异环抓包.js, argument="{CaptureSwitch}", timeout=10
 
-异环定时签到 = type=cron, cronexp="0 0 0 * * *", script-path=https://raw.githubusercontent.com/你的用户名/你的仓库/main/异环签到.js, wake-system=1, persistent=1, timeout=60
+# persistent=1 保证定时任务数据持久化
+异环定时签到 = type=cron, cronexp="0 0 0 * * *", script-path=https://github.com/h05n/waibucangku/raw/main/异环签到.js, wake-system=1, persistent=1, timeout=60
 
 [MITM]
 hostname = %APPEND% bbs-api.tajiduo.com, user.laohu.com
