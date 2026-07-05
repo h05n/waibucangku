@@ -1,16 +1,12 @@
 #!name=异环自动化
 #!desc=塔吉多与云异环自动签到
-#!author=Candy-QAQ
+#!param=CaptureSwitch, default="", desc="抓包开关：填入 # 即可关闭抓包功能"
 
 [Script]
-# 抓包开关：默认开启。填入 # 则直接跳过抓包逻辑，保护隐私并节省性能。
-异环Token抓取 = type=http-request, pattern=^https:\/\/(bbs-api\.tajiduo\.com|user\.laohu\.com)\/.*, requires-body=1, max-size=0, script-path=https://github.com/h05n/waibucangku/raw/main/异环抓包.js, argument="", timeout=10
+# 这里的 argument 动态引用了上面声明的 CaptureSwitch 变量
+异环Token抓取 = type=http-request, pattern=^https:\/\/(bbs-api\.tajiduo\.com|user\.laohu\.com)\/.*, requires-body=1, max-size=0, script-path=https://raw.githubusercontent.com/你的用户名/你的仓库/main/异环抓包.js, argument="{CaptureSwitch}", timeout=10
 
-# 定时签到：每天 0 点整执行
-异环定时签到 = type=cron, cronexp="0 0 0 * * *", script-path=https://github.com/h05n/waibucangku/raw/main/异环签到.js, wake-system=1, persistent=1, timeout=60
-
-# 面板显示：点击可手动运行签到
-异环签到面板 = type=generic, title="异环签到", content="等待运行...", script-path=https://github.com/h05n/waibucangku/raw/main/异环签到.js, persistent=1
+异环定时签到 = type=cron, cronexp="0 0 0 * * *", script-path=https://raw.githubusercontent.com/你的用户名/你的仓库/main/异环签到.js, wake-system=1, persistent=1, timeout=60
 
 [MITM]
 hostname = %APPEND% bbs-api.tajiduo.com, user.laohu.com
