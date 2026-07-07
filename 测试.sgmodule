@@ -3,9 +3,9 @@
 #!system=ios
 
 [Map Local]
-# 拦截 qimo 和 b23 节点的 reviews 网页请求，强制使用本地的 起点.html 进行渲染
-^https?:\/\/qdcomment\.(qimo|b23)\.host\/reviews(.*)$ = 起点.html
+# 拦截 b23 节点的 reviews 网页请求，强制使用本地的 起点.html 进行渲染
+^https?:\/\/qdcomment\.b23\.host\/reviews.* = 起点.html
 
 [MITM]
 # 开启对应域名的 HTTPS 解密，否则 Surge 无法拦截网页
-hostname = %APPEND% qdcomment.b23.host, qdcomment.qimo.host
+hostname = %APPEND% qdcomment.b23.host
