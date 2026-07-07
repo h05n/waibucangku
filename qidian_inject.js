@@ -1,16 +1,36 @@
-// qidian_inject.js
-// 这是替你从 GitHub 搬运代码并替换给阅读 App 的机器人
+// qidian_inject.js (GitHub Raw 直连版 - 失败绝对拦截)
 
-// 我已经帮你转换成了安全的 Raw 直链
-const githubUrl = "https://raw.githubusercontent.com/h05n/waibucangku/main/%E8%B5%B7%E7%82%B9.html";
+const rawUrl = "https://raw.githubusercontent.com/h05n/waibucangku/main/%E8%B5%B7%E7%82%B9.html";
 
-$httpClient.get(githubUrl, function(error, response, data) {
+$httpClient.get(rawUrl, function(error, response, data) {
     if (error) {
-        console.log("拉取 GitHub 上的起点.html 失败: " + error);
-        // 如果遇到断网或者 GitHub 连不上，就放行原版页面，保证你至少有书看
-        $done({}); 
+        console.log("从 GitHub 拉取失败: " + error);
+        // 失败绝对不放行，直接强行返回一个报错页面
+        $done({
+            response: {
+                status: 500,
+                headers: {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-cache, no-store, must-revalidate"
+                },
+                body: `<div style="padding: 20px; text-align: center; font-family: sans-serif; margin-top: 50px;">
+                        <h2 style="color: #d32f2f;">⚠️ 页面替换失败</h2>
+                        <p>无法连接到 GitHub 拉取最新代码。</p>
+                        <p style="color: #666; font-size: 14px; word-break: break-all;">错误信息: ${error}</p>
+                       </div>`
+            }
+        });
     } else {
-        // 成功拿到代码，瞬间替换掉原本的网页！
-        $done({ body: data });
+        // 成功拿到代码，直接伪装成服务器把网页发给 App
+        $done({
+            response: {
+                status: 200,
+                headers: {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-cache, no-store, must-revalidate"
+                },
+                body: data
+            }
+        });
     }
 });
