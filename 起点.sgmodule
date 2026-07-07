@@ -1,9 +1,9 @@
-#!name=起点纯净版段评 (云端热更新版)
-#!desc=从 GitHub CDN 实时拉取纯净版 HTML，请求阶段直接截胡，彻底解决缓存和原版网页残留问题。
+#!name=起点纯净版段评 (GitHub直连版)
+#!desc=从 GitHub Raw 实时拉取纯净版 HTML，请求阶段直接截胡，彻底解决缓存和原版网页残留问题。
 #!system=ios
 
 [Script]
-# 将原来的 type=http-response 改为 type=http-request，并去掉没用的 max-size 等限制
+# 注意这里是 type=http-request，直接在请求发出去之前就把它拦截掉
 起点云端替换 = type=http-request, pattern=^https?:\/\/qdcomment\.b23\.host\/reviews.*, script-path=qidian_inject.js
 
 [MITM]
