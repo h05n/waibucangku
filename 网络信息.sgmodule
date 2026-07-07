@@ -1,7 +1,0 @@
-#!name=网络信息
-#!desc=本地、入口、落地
-[Script]
-网络信息 = type=generic,timeout=20,script-path=https://github.com/h05n/waibucangku/raw/main/网络信息.js
-
-[Panel]
-网络信息面板 = script-name=网络信息, update-interval=1
