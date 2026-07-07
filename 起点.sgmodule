@@ -1,11 +1,11 @@
-#!name=起点纯净版段评
-#!desc=将书源的起点段评在线页面，一键替换为本地极简纯净版。使用前请确保 Surge 文件夹根目录已存放 [起点.html] 文件。
+#!name=起点纯净版段评 (云端热更新版)
+#!desc=从 GitHub 实时拉取纯净版 HTML，无缝替换起点的段评页面。以后想改代码直接在 GitHub 上改，手机端无需任何操作即刻生效！
 #!system=ios
 
-[Map Local]
-# 拦截 b23 节点的 reviews 网页请求，强制使用本地的 起点.html 进行渲染
-^https?:\/\/qdcomment\.b23\.host\/reviews.* = 起点.html
+[Script]
+# 拦截段评网页，呼叫 JS 脚本去 GitHub 下载你的代码并替换
+起点云端替换 = type=http-response, pattern=^https?:\/\/qdcomment\.b23\.host\/reviews.*, requires-body=1, max-size=3145728, script-path=qidian_inject.js
 
 [MITM]
-# 开启对应域名的 HTTPS 解密，否则 Surge 无法拦截网页
+# 允许 Surge 解密起点的段评连接
 hostname = %APPEND% qdcomment.b23.host
